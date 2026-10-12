@@ -1,8 +1,17 @@
 import nodemailer from 'nodemailer';
+import {Resend} from 'resend';
 import {env} from '../config/env.js';
 import {AppError} from '../utils/response.js';
 
 let transporter = null;
+let resendClient = null;
+
+function getResend() {
+  if (!resendClient && env.resendApiKey) {
+    resendClient = new Resend(env.resendApiKey);
+  }
+  return resendClient;
+}
 
 function getTransporter() {
   if (!transporter) {
@@ -26,6 +35,21 @@ function getTransporter() {
 }
 
 async function sendMail({to, subject, text}) {
+  const resend = getResend();
+  if (resend) {
+    const {data, error} = await resend.emails.send({
+      from: env.resendFrom || 'R2Cart <onboarding@resend.dev>',
+      to: [to],
+      subject,
+      text,
+    });
+    if (error) {
+      console.error('Resend delivery error:', error);
+      throw new AppError(`Email delivery failed via Resend: ${error.message}`, 503);
+    }
+    return data;
+  }
+
   const transport = getTransporter();
   return await transport.sendMail({
     from: `R2Cart <${env.smtpFrom || env.smtpUser}>`,
@@ -47,10 +71,10 @@ function handleMailError(error) {
   const msg = (error.message || '').toLowerCase();
 
   if (code === 'EAUTH' || responseCode === 535 || responseCode === 534 || /535|534|5\.7\.[89]/i.test(msg)) {
-    throw new AppError('Google rejected SMTP authentication (Bad Credentials). Kripya confirm karein ki App Password r2cartsupport2@gmail.com account ke andar hi generate kiya gaya hai.', 503);
+    throw new AppError('Google rejected SMTP authentication (Bad Credentials). Kripya confirm karein ki App Password sahi account ke andar generate kiya gaya hai.', 503);
   }
   if (/econnrefused|enotfound|etimedout|esocket/i.test(code) || /econnrefused|enotfound|etimedout/i.test(msg)) {
-    throw new AppError('Email service is temporarily unreachable. Please check SMTP host/port settings.', 503);
+    throw new AppError('Email service is temporarily unreachable on SMTP port. On Render Free tier, please configure RESEND_API_KEY.', 503);
   }
   if (responseCode === 550 || /550|recipient.*rejected/i.test(msg)) {
     throw new AppError('The recipient email address was rejected by the mail server.', 400);
@@ -59,12 +83,12 @@ function handleMailError(error) {
 }
 
 export async function sendOtpEmail(to, otp, purpose = 'signup') {
-  if (env.nodeEnv !== 'production') {
-    console.log(`[R2Cart Dev OTP] ${purpose.toUpperCase()} code for ${to}: ${otp}`);
+  if (env.nodeEnv !== 'production' || env.exposeOtp) {
+    console.log(`[R2Cart OTP] ${purpose.toUpperCase()} code for ${to}: ${otp}`);
   }
 
-  if (env.otpProvider !== 'smtp') {
-    if (env.nodeEnv === 'production') throw new AppError('SMTP email delivery is not configured', 503);
+  if (env.otpProvider !== 'smtp' && env.otpProvider !== 'resend') {
+    if (env.nodeEnv === 'production' && !env.exposeOtp) throw new AppError('Email delivery is not configured', 503);
     return;
   }
 
@@ -81,13 +105,14 @@ export async function sendOtpEmail(to, otp, purpose = 'signup') {
   try {
     await sendMail({to, subject, text: body});
   } catch (error) {
+    if (env.resendApiKey) throw error;
     handleMailError(error);
   }
 }
 
 export async function sendSupportTicketEmail({ticketNumber, issueType, subject, description, orderId, customer}) {
   if (!env.supportEmail) return false;
-  if (env.otpProvider !== 'smtp') {
+  if (env.otpProvider !== 'smtp' && env.otpProvider !== 'resend') {
     console.log(`R2Cart support ticket ${ticketNumber} for ${env.supportEmail}`);
     return false;
   }
