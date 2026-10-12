@@ -1,0 +1,28 @@
+name: Keep Render Backend Awake
+
+on:
+  schedule:
+    # Triggers every 12 minutes to keep the Render free-tier instance active
+    - cron: '*/12 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  ping-render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Health Endpoint
+        run: |
+          URL="${{ vars.RENDER_BACKEND_URL || secrets.RENDER_BACKEND_URL }}"
+          if [ -z "$URL" ]; then
+            echo "⚠️ RENDER_BACKEND_URL is not configured yet."
+            echo "Once deployed, add your Render URL to GitHub Repo Settings -> Secrets and variables -> Actions -> Variables."
+            exit 0
+          fi
+
+          # Ensure URL doesn't have a trailing slash
+          CLEAN_URL="${URL%/}"
+          HEALTH_URL="$CLEAN_URL/api/v1/health"
+
+          echo "Pinging: $HEALTH_URL at $(date -u)"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$HEALTH_URL" || echo "FAILED")
+          echo "HTTP Status Code: $STATUS"
