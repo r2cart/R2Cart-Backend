@@ -12,12 +12,7 @@ jobs:
     steps:
       - name: Ping Health Endpoint
         run: |
-          URL="${{ vars.RENDER_BACKEND_URL || secrets.RENDER_BACKEND_URL }}"
-          if [ -z "$URL" ]; then
-            echo "⚠️ RENDER_BACKEND_URL is not configured yet."
-            echo "Once deployed, add your Render URL to GitHub Repo Settings -> Secrets and variables -> Actions -> Variables."
-            exit 0
-          fi
+          URL="${{ vars.RENDER_BACKEND_URL || secrets.RENDER_BACKEND_URL || 'https://r2cart-backend.onrender.com' }}"
 
           # Ensure URL doesn't have a trailing slash
           CLEAN_URL="${URL%/}"
