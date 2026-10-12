@@ -1,12 +1,122 @@
-import net from 'node:net';
-import tls from 'node:tls';
+import nodemailer from 'nodemailer';
 import {env} from '../config/env.js';
 import {AppError} from '../utils/response.js';
 
-const command=(socket,value)=>socket.write(`${value}\r\n`);
-const response=(socket,codes)=>new Promise((resolve,reject)=>{let buffer='';const clean=()=>{socket.off('data',data);socket.off('error',fail)};const fail=error=>{clean();reject(error)};const data=chunk=>{buffer+=chunk.toString('utf8');const last=buffer.trimEnd().split(/\r?\n/).at(-1)||'';if(!/^\d{3}\s/.test(last))return;const code=Number(last.slice(0,3));clean();codes.includes(code)?resolve(buffer):reject(new Error(buffer))};socket.on('data',data);socket.on('error',fail)});
-const connect=()=>new Promise((resolve,reject)=>{const options={host:env.smtpHost,port:env.smtpPort,servername:env.smtpHost,rejectUnauthorized:env.smtpRejectUnauthorized};const socket=env.smtpSecure?tls.connect(options,()=>resolve(socket)):net.connect(options,()=>resolve(socket));socket.once('error',reject)});
-const upgrade=socket=>new Promise((resolve,reject)=>{const secure=tls.connect({socket,servername:env.smtpHost,rejectUnauthorized:env.smtpRejectUnauthorized},()=>resolve(secure));secure.once('error',reject)});
-const safe=value=>String(value).replace(/^\./gm,'..').replace(/[\r\n]+/g,' ');
-async function smtp({to,subject,body}){let socket=await connect();try{await response(socket,[220]);command(socket,`EHLO ${env.smtpHost}`);await response(socket,[250]);if(!env.smtpSecure){command(socket,'STARTTLS');await response(socket,[220]);socket=await upgrade(socket);command(socket,`EHLO ${env.smtpHost}`);await response(socket,[250])}command(socket,'AUTH LOGIN');await response(socket,[334]);command(socket,Buffer.from(env.smtpUser).toString('base64'));await response(socket,[334]);command(socket,Buffer.from(env.smtpPass.replace(/\s/g,'')).toString('base64'));await response(socket,[235]);command(socket,`MAIL FROM:<${env.smtpFrom}>`);await response(socket,[250]);command(socket,`RCPT TO:<${to}>`);await response(socket,[250,251]);command(socket,'DATA');await response(socket,[354]);const message=[`From: Grocify <${env.smtpFrom}>`,`To: ${safe(to)}`,`Subject: ${safe(subject)}`,'MIME-Version: 1.0','Content-Type: text/plain; charset=utf-8','',body].join('\r\n').replace(/^\./gm,'..');command(socket,`${message}\r\n.`);await response(socket,[250]);command(socket,'QUIT')}finally{socket.end()}}
-export async function sendOtpEmail(to,otp){if(env.otpProvider!=='smtp'){if(env.nodeEnv==='production')throw new AppError('SMTP email delivery is not configured',503);console.log(`Grocify OTP for ${to}: ${otp}`);return}try{await smtp({to,subject:'Your Grocify verification code',body:[`Your Grocify verification code is ${otp}.`,'',`This code expires in ${env.otpMinutes} minutes.`,'Never share this code with anyone.','If you did not request this, you can safely ignore this email.'].join('\r\n')})}catch(error){console.error('SMTP delivery failed:',error.message);if(/535|534|5\.7\.[89]|auth/i.test(error.message))throw new AppError('SMTP login was rejected. Check the email App Password.',503);if(/ENOTFOUND|ECONNREFUSED|ETIMEDOUT/i.test(error.message))throw new AppError('Email service is temporarily unreachable.',503);throw new AppError('Could not send the verification email. Please try again.',503)}}
+let transporter = null;
+
+function getTransporter() {
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      host: env.smtpHost,
+      port: env.smtpPort,
+      secure: env.smtpSecure,
+      auth: {
+        user: env.smtpUser,
+        pass: env.smtpPass.replace(/['"\s]/g, ''),
+      },
+      tls: {
+        rejectUnauthorized: env.smtpRejectUnauthorized,
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+    });
+  }
+  return transporter;
+}
+
+async function sendMail({to, subject, text}) {
+  const transport = getTransporter();
+  return await transport.sendMail({
+    from: `R2Cart <${env.smtpFrom || env.smtpUser}>`,
+    to,
+    subject,
+    text,
+  });
+}
+
+function handleMailError(error) {
+  console.error('SMTP delivery failed with details:', {
+    code: error.code,
+    responseCode: error.responseCode,
+    command: error.command,
+    message: error.message,
+  });
+  const code = error.code || '';
+  const responseCode = error.responseCode || 0;
+  const msg = (error.message || '').toLowerCase();
+
+  if (code === 'EAUTH' || responseCode === 535 || responseCode === 534 || /535|534|5\.7\.[89]/i.test(msg)) {
+    throw new AppError('Google rejected SMTP authentication (Bad Credentials). Kripya confirm karein ki App Password r2cartsupport2@gmail.com account ke andar hi generate kiya gaya hai.', 503);
+  }
+  if (/econnrefused|enotfound|etimedout|esocket/i.test(code) || /econnrefused|enotfound|etimedout/i.test(msg)) {
+    throw new AppError('Email service is temporarily unreachable. Please check SMTP host/port settings.', 503);
+  }
+  if (responseCode === 550 || /550|recipient.*rejected/i.test(msg)) {
+    throw new AppError('The recipient email address was rejected by the mail server.', 400);
+  }
+  throw new AppError('Could not send the verification email. Please try again.', 503);
+}
+
+export async function sendOtpEmail(to, otp, purpose = 'signup') {
+  if (env.nodeEnv !== 'production') {
+    console.log(`[R2Cart Dev OTP] ${purpose.toUpperCase()} code for ${to}: ${otp}`);
+  }
+
+  if (env.otpProvider !== 'smtp') {
+    if (env.nodeEnv === 'production') throw new AppError('SMTP email delivery is not configured', 503);
+    return;
+  }
+
+  const reset = purpose === 'password_reset';
+  const subject = reset ? 'Reset your R2Cart password' : 'Your R2Cart verification code';
+  const body = [
+    reset ? `Use ${otp} to reset your R2Cart password.` : `Your R2Cart verification code is ${otp}.`,
+    '',
+    `This code expires in ${env.otpMinutes} minutes.`,
+    'Never share this code with anyone.',
+    'If you did not request this, you can safely ignore this email.',
+  ].join('\r\n');
+
+  try {
+    await sendMail({to, subject, text: body});
+  } catch (error) {
+    handleMailError(error);
+  }
+}
+
+export async function sendSupportTicketEmail({ticketNumber, issueType, subject, description, orderId, customer}) {
+  if (!env.supportEmail) return false;
+  if (env.otpProvider !== 'smtp') {
+    console.log(`R2Cart support ticket ${ticketNumber} for ${env.supportEmail}`);
+    return false;
+  }
+
+  try {
+    await sendMail({
+      to: env.supportEmail,
+      subject: `R2Cart support: ${ticketNumber} · ${subject}`,
+      text: [
+        'A new customer support ticket has been submitted.',
+        '',
+        `Ticket: ${ticketNumber}`,
+        `Issue type: ${issueType}`,
+        `Customer: ${customer.name}`,
+        `Email: ${customer.email}`,
+        `Mobile: ${customer.mobile || 'Not provided'}`,
+        `Order ID: ${orderId || 'Not linked'}`,
+        '',
+        `Subject: ${subject}`,
+        '',
+        'Customer message:',
+        description,
+        '',
+        'Open the R2Cart Admin support panel to respond.',
+      ].join('\r\n'),
+    });
+    return true;
+  } catch (error) {
+    console.error(`Support notification email failed for ticket ${ticketNumber}:`, error.message);
+    return false;
+  }
+}

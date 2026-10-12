@@ -1,23 +1,67 @@
 import bcrypt from 'bcryptjs';
+import {randomUUID} from 'node:crypto';
+import {variantData} from '../utils/variants.js';
 import {prisma} from '../config/prisma.js';
 import {AppError,asyncHandler,created,ok} from '../utils/response.js';
-import {orderDto,productDto} from '../utils/order.js';
-export const uploadProductImage=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose an image to upload',422);created(res,{url:`${req.protocol}://${req.get('host')}/uploads/products/${req.file.filename}`},'Product image uploaded')});
+import {productDto} from '../utils/order.js';
+import {deleteProduct,deleteAllProducts} from '../services/product-deletion.service.js';
+import {couponData} from '../utils/coupon.js';
+export const uploadProductImage=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose an image to upload',422);const slug=String(req.body.category||'').trim();if(!slug)throw new AppError('Select a category before uploading the product image',422);const category=await prisma.category.findUnique({where:{slug},select:{slug:true}});if(!category)throw new AppError('Product category not found',404);created(res,await uploadProductMedia(req.file.buffer,category.slug),'Product image uploaded to its Cloudinary category folder')});
 export const uploadBannerImage=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose an image to upload',422);created(res,{url:`${req.protocol}://${req.get('host')}/uploads/banners/${req.file.filename}`},'Banner image uploaded')});
-export const dashboard=asyncHandler(async(req,res)=>{const today=new Date();today.setHours(0,0,0,0);const [todayOrders,pending,totalOrders,totalCustomers,totalProducts,lowStock,outOfStock,revenue,recentOrders,recentCustomers,topProducts]=await Promise.all([prisma.order.count({where:{createdAt:{gte:today}}}),prisma.order.count({where:{status:{in:['NEW','CONFIRMED','PACKING']}}}),prisma.order.count(),prisma.user.count({where:{role:'CUSTOMER'}}),prisma.product.count({where:{deletedAt:null}}),prisma.product.count({where:{stock:{gt:0,lte:10},deletedAt:null}}),prisma.product.count({where:{stock:0,deletedAt:null}}),prisma.order.aggregate({_sum:{grandTotal:true},where:{status:'DELIVERED'}}),prisma.order.findMany({take:8,orderBy:{createdAt:'desc'},include:{items:true,user:true}}),prisma.user.findMany({where:{role:'CUSTOMER'},take:6,orderBy:{createdAt:'desc'}}),prisma.orderItem.groupBy({by:['productId','name'],_sum:{quantity:true},orderBy:{_sum:{quantity:'desc'}},take:5})]);ok(res,{stats:{todayOrders,pending,totalOrders,totalCustomers,totalProducts,lowStock,outOfStock,totalRevenue:Number(revenue._sum.grandTotal||0)},recentOrders:recentOrders.map(orderDto),recentCustomers,topProducts})});
+export const uploadStoreLogo=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose a logo to upload',422);created(res,{url:`${req.protocol}://${req.get('host')}/uploads/settings/${req.file.filename}`},'Store logo uploaded')});
 const productData=body=>{
  const status=String(body.status||'ACTIVE').trim().toUpperCase();
  if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Invalid product status',422);
- return {name:String(body.name||'').trim(),description:String(body.description||'').trim(),unit:String(body.unit||'').trim(),sku:String(body.sku||'').trim().toUpperCase(),mrp:Number(body.mrp),price:Number(body.price),stock:Number(body.stock),status,featured:Boolean(body.featured),bestSeller:Boolean(body.bestSeller)};
+ const threshold=body.lowStockThreshold===undefined?undefined:Number(body.lowStockThreshold);
+ if(threshold!==undefined&&(!Number.isInteger(threshold)||threshold<0||threshold>2147483647))throw new AppError('Enter a valid whole-number stock alert threshold',422);
+ return {name:String(body.name||'').trim(),description:String(body.description||'').trim(),...variantData(body),...(threshold!==undefined&&{lowStockThreshold:threshold}),status,featured:Boolean(body.featured),bestSeller:Boolean(body.bestSeller)};
 };
-const productInclude={category:true,images:{orderBy:{position:'asc'}}};
+const productInclude={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
 async function uniqueProductSlug(name){const base=name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||`product-${Date.now()}`;let slug=base,index=2;while(await prisma.product.findUnique({where:{slug},select:{id:true}}))slug=`${base}-${index++}`;return slug}
 export const products={
- create:asyncHandler(async(req,res)=>{const {category,image}=req.body;const data=productData(req.body);const cat=await prisma.category.findUnique({where:{slug:category}});if(!cat)throw new AppError('Category not found',404);if(!data.name||!data.description||!data.unit||!data.sku)throw new AppError('Complete all required product fields',422);if(await prisma.product.findUnique({where:{sku:data.sku},select:{id:true}}))throw new AppError('A product with this SKU already exists. Enter a unique SKU.',409);const slug=await uniqueProductSlug(data.name);created(res,productDto(await prisma.product.create({data:{...data,id:req.body.id||`p${Date.now()}`,slug,categoryId:cat.id,images:image?{create:{url:String(image).trim()}}:undefined},include:productInclude}))) }),
- update:asyncHandler(async(req,res)=>{const {category,image}=req.body;const data=productData(req.body);const cat=await prisma.category.findUnique({where:{slug:category}});if(!cat)throw new AppError('Category not found',404);if(!data.name||!data.description||!data.unit||!data.sku)throw new AppError('Complete all required product fields',422);const imageUrl=String(image||'').trim();ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{...data,categoryId:cat.id,...(imageUrl&&{images:{deleteMany:{},create:{url:imageUrl}}})},include:productInclude})),'Product updated')}),
+ create:asyncHandler(async(req,res)=>{
+  const {category,image}=req.body;
+  const data=productData(req.body);
+  const cat=await prisma.category.findUnique({where:{slug:category}});
+  if(!cat)throw new AppError('Category not found',404);
+  if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
+  const slug=await uniqueProductSlug(data.name);
+  const sku=`R2C-${randomUUID().replaceAll('-','').toUpperCase()}`;
+  if(req.body.packs!==undefined&&!Array.isArray(req.body.packs))throw new AppError('Pack sizes must be a list',422);
+  if((req.body.packs||[]).length>20)throw new AppError('Add no more than 20 additional packs at once',422);
+  const packs=(req.body.packs||[]).map(variantData);
+  const units=[data.unit,...packs.map(pack=>pack.unit)].map(unit=>unit.toLowerCase().replace(/\s+/g,''));
+  if(new Set(units).size!==units.length)throw new AppError('Each pack size must be different',422);
+  const baseId=`p-${randomUUID()}`,variantGroupId=packs.length?baseId:null;
+  const saved=await prisma.$transaction(async tx=>{
+   const base=await tx.product.create({data:{...data,sku,id:baseId,slug,variantGroupId,categoryId:cat.id,images:image?{create:{url:String(image).trim()}}:undefined},include:productInclude});
+   for(const pack of packs){const identifier=randomUUID();await tx.product.create({data:{...data,...pack,id:`p-${identifier}`,sku:`R2C-${identifier.replaceAll('-','').toUpperCase()}`,slug:`${slug.slice(0,150)}-${identifier}`,variantGroupId,categoryId:cat.id,images:image?{create:{url:String(image).trim()}}:undefined}})}
+   return base;
+  });
+  created(res,productDto(saved),'Product and all pack sizes saved');
+ }),
+ update:asyncHandler(async(req,res)=>{
+  const existing=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true,deletedAt:true}});
+  if(!existing||existing.deletedAt)throw new AppError('Product not found',404);
+  const {category,image}=req.body;
+  const data=productData(req.body);
+  const cat=await prisma.category.findUnique({where:{slug:category}});
+  if(!cat)throw new AppError('Category not found',404);
+  if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
+  // SKU identifies inventory permanently and is never regenerated on edit.
+  const imageUrl=String(image||'').trim();
+  ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{...data,categoryId:cat.id,...(imageUrl&&{images:{deleteMany:{},create:{url:imageUrl}}})},include:productInclude})),'Product updated');
+ }),
  status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').trim().toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const product=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true}});if(!product)throw new AppError('Product not found',404);ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude})),status==='ACTIVE'?'Product activated':'Product deactivated')}),
- remove:asyncHandler(async(req,res)=>{await prisma.product.update({where:{id:req.params.id},data:{deletedAt:new Date(),status:'INACTIVE'}});ok(res,null,'Product deleted')}),
- stock:asyncHandler(async(req,res)=>ok(res,await prisma.product.update({where:{id:req.params.id},data:{stock:Number(req.body.stock),lowStockThreshold:Number(req.body.lowStockThreshold??10)}}),'Stock updated'))
+ remove:asyncHandler(async(req,res)=>{await deleteProduct(req.params.id);ok(res,null,'Product deleted; unused Cloudinary images removed')}),
+ removeAll:asyncHandler(async(req,res)=>{const result=await deleteAllProducts();ok(res,result,`All ${result.count} products deleted successfully`)}),
+ stock:asyncHandler(async(req,res)=>{
+  const current=await prisma.product.findUnique({where:{id:req.params.id}});if(!current||current.deletedAt)throw new AppError('Product not found',404);
+  const stock=Number(req.body.stock),lowStockThreshold=req.body.lowStockThreshold===undefined?current.lowStockThreshold:Number(req.body.lowStockThreshold);
+  if(req.body.stock===''||!Number.isInteger(stock)||stock<0||stock>2147483647||!Number.isInteger(lowStockThreshold)||lowStockThreshold<0||lowStockThreshold>2147483647)throw new AppError('Stock and threshold must be valid whole numbers',422);
+  const product=await prisma.product.update({where:{id:req.params.id},data:{stock,lowStockThreshold},include:productInclude});
+  ok(res,{...productDto(product),stockStatus:stock===0?'OUT_OF_STOCK':stock<=lowStockThreshold?'LOW_STOCK':'IN_STOCK'},'Stock updated');
+ })
 };
 const categoryData=body=>{
  const name=String(body.name||'').trim();
@@ -44,14 +88,6 @@ export const categories={
   ok(res,null,'Category deleted');
  })
 };
-export const orders={list:asyncHandler(async(req,res)=>{const rows=await prisma.order.findMany({where:req.query.status?{status:req.query.status}:{},include:{user:true,items:true},orderBy:{createdAt:'desc'}});ok(res,rows.map(orderDto))}),get:asyncHandler(async(req,res)=>{const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}]},include:{user:true,items:true,history:true,payment:true,coupon:true}});if(!row)throw new AppError('Order not found',404);ok(res,orderDto(row))}),status:asyncHandler(async(req,res)=>{const status=String(req.body.status).trim().toUpperCase().replaceAll(' ','_');const allowed=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];if(!allowed.includes(status))throw new AppError('Invalid order status',422);const row=await prisma.$transaction(async tx=>{const order=await tx.order.update({where:{id:req.params.id},data:{status}});await tx.orderStatusHistory.create({data:{orderId:order.id,status,note:req.body.note}});return order});ok(res,orderDto(row),'Order status updated')})};
-export const customers=asyncHandler(async(req,res)=>{
- const where={role:'CUSTOMER'};
- if(req.query.q)where.OR=[{name:{contains:req.query.q}},{email:{contains:req.query.q}}];
- const rows=await prisma.user.findMany({where,include:{addresses:true,orders:{select:{id:true,grandTotal:true,status:true,createdAt:true}}},orderBy:{createdAt:'desc'}});
- ok(res,rows.map(user=>({...user,passwordHash:undefined,totalOrders:user.orders.length,totalSpent:user.orders.reduce((sum,order)=>sum+Number(order.grandTotal),0)})));
-});
-const couponData=body=>({code:String(body.code).trim().toUpperCase(),type:String(body.type).toUpperCase(),discount:Number(body.discount),minimumOrder:Number(body.minimumOrder),maximumDiscount:body.maximumDiscount===''||body.maximumDiscount==null?null:Number(body.maximumDiscount),usageLimit:body.usageLimit===''||body.usageLimit==null?null:Number(body.usageLimit),perUserLimit:Number(body.perUserLimit||1),startsAt:new Date(body.startsAt),expiresAt:new Date(body.expiresAt),status:String(body.status||'ACTIVE').toUpperCase()});
 export const coupons={
  list:asyncHandler(async(req,res)=>ok(res,await prisma.coupon.findMany({orderBy:{createdAt:'desc'}}))),
  create:asyncHandler(async(req,res)=>created(res,await prisma.coupon.create({data:couponData(req.body)}),'Coupon created')),
@@ -78,9 +114,42 @@ export const inventory=asyncHandler(async(req,res)=>{
  const data=rows.map(product=>({...productDto(product),stockStatus:product.stock===0?'OUT_OF_STOCK':product.stock<=product.lowStockThreshold?'LOW_STOCK':'IN_STOCK'}));
  ok(res,data);
 });
-export const delivery={list:asyncHandler(async(req,res)=>ok(res,await prisma.deliveryArea.findMany())),save:asyncHandler(async(req,res)=>ok(res,await prisma.deliveryArea.upsert({where:{id:req.body.id||''},update:req.body,create:req.body}),'Delivery settings saved'))};
+const deliveryData=body=>{
+ const name=String(body.name||'').trim();if(!name)throw new AppError('Delivery zone name is required',422);
+ const localities=[...new Set((Array.isArray(body.localities)?body.localities:body.pincodes||[]).map(value=>String(value).trim()).filter(Boolean))];
+ if(!localities.length)throw new AppError('Select at least one serviceable locality',422);
+ const number=(key,label,{nullable=false}={})=>{if(nullable&&(body[key]===''||body[key]==null))return null;const value=Number(body[key]);if(!Number.isFinite(value)||value<0)throw new AppError(`${label} must be zero or more`,422);return value};
+ const status=String(body.status||'ACTIVE').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);
+ const estimatedMinutes=number('estimatedMinutes','Estimated delivery time');if(!Number.isInteger(estimatedMinutes)||estimatedMinutes<1)throw new AppError('Estimated delivery time must be at least 1 minute',422);
+ return {name,pincodes:localities,radiusKm:number('radiusKm','Delivery radius',{nullable:true}),minimumOrder:number('minimumOrder','Minimum order'),deliveryFee:number('deliveryFee','Delivery fee'),freeDeliveryThreshold:number('freeDeliveryThreshold','Free delivery threshold'),estimatedMinutes,status};
+};
+const deliveryView=area=>({...area,localities:Array.isArray(area.pincodes)?area.pincodes:[]});
+export const delivery={
+ defaults:asyncHandler(async(req,res)=>{
+  const data={};for(const key of ['minimumOrder','deliveryFee','freeDeliveryThreshold']){const value=Number(req.body[key]);if(req.body[key]===''||req.body[key]==null||!Number.isFinite(value)||value<0)throw new AppError(`Enter a valid ${key}`,422);data[key]=value}
+  data.estimatedDelivery=String(req.body.estimatedDelivery||'').trim();if(!data.estimatedDelivery)throw new AppError('Delivery estimate is required',422);
+  if(!await prisma.storeSetting.findUnique({where:{id:1},select:{id:true}}))throw new AppError('Configure store settings first',409);
+  ok(res,await prisma.storeSetting.update({where:{id:1},data}),'Default delivery rules saved');
+ }),
+ list:asyncHandler(async(req,res)=>ok(res,(await prisma.deliveryArea.findMany({orderBy:{name:'asc'}})).map(deliveryView))),
+ create:asyncHandler(async(req,res)=>created(res,deliveryView(await prisma.deliveryArea.create({data:deliveryData(req.body)})),'Delivery zone created')),
+ update:asyncHandler(async(req,res)=>ok(res,deliveryView(await prisma.deliveryArea.update({where:{id:req.params.id},data:deliveryData(req.body)})),'Delivery zone updated')),
+ status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);ok(res,deliveryView(await prisma.deliveryArea.update({where:{id:req.params.id},data:{status}})),status==='ACTIVE'?'Delivery zone activated':'Delivery zone paused')}),
+ remove:asyncHandler(async(req,res)=>{await prisma.deliveryArea.delete({where:{id:req.params.id}});ok(res,null,'Delivery zone permanently deleted')})
+};
 export const support={list:asyncHandler(async(req,res)=>ok(res,await prisma.supportTicket.findMany({include:{user:{select:{id:true,name:true,email:true,mobile:true}},messages:{orderBy:{createdAt:'asc'}}},orderBy:{createdAt:'desc'}}))),reply:asyncHandler(async(req,res)=>{const status=req.body.status?String(req.body.status).toUpperCase():undefined;if(status&&!['OPEN','PENDING','RESOLVED'].includes(status))throw new AppError('Invalid ticket status',422);const message=String(req.body.message||'').trim();const ticket=await prisma.supportTicket.update({where:{id:req.params.id},data:{status,messages:message?{create:{message,isAdmin:true,senderId:req.user.id}}:undefined},include:{messages:true}});ok(res,ticket,'Ticket updated')})};
 export const settings={
  get:asyncHandler(async(req,res)=>ok(res,await prisma.storeSetting.findUnique({where:{id:1}}))),
- save:asyncHandler(async(req,res)=>ok(res,await prisma.storeSetting.upsert({where:{id:1},update:req.body,create:{id:1,...req.body}}),'Settings saved'))
+ save:asyncHandler(async(req,res)=>{
+  const current=await prisma.storeSetting.findUnique({where:{id:1}});
+  const text=(key,label)=>{const value=String(req.body[key]||'').trim();if(!value)throw new AppError(`${label} is required`,422);return value};
+  const money=(key,label)=>{const value=Number(req.body[key]===undefined?current?.[key]:req.body[key]);if(!Number.isFinite(value)||value<0)throw new AppError(`${label} must be zero or more`,422);return value};
+  const openingTime=text('openingTime','Opening time'),closingTime=text('closingTime','Closing time');
+  if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(openingTime)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(closingTime))throw new AppError('Enter valid store opening and closing times',422);
+  const email=text('email','Email');if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new AppError('Enter a valid store email',422);
+  const notifications=req.body.notifications&&typeof req.body.notifications==='object'?req.body.notifications:{};
+  if(req.body.estimatedDelivery===undefined)req.body.estimatedDelivery=current?.estimatedDelivery;
+  const data={storeName:text('storeName','Store name'),logo:String(req.body.logo||'').trim()||null,contactNumber:text('contactNumber','Contact number'),email,address:text('address','Store address'),openingTime,closingTime,currency:String(req.body.currency||'INR').trim().toUpperCase(),minimumOrder:money('minimumOrder','Minimum order'),deliveryFee:money('deliveryFee','Delivery fee'),freeDeliveryThreshold:money('freeDeliveryThreshold','Free delivery threshold'),estimatedDelivery:text('estimatedDelivery','Estimated delivery'),notifications:{orders:Boolean(notifications.orders),stock:Boolean(notifications.stock),customers:Boolean(notifications.customers)}};
+  ok(res,await prisma.storeSetting.upsert({where:{id:1},update:data,create:{id:1,...data}}),'Store settings saved');
+ })
 };

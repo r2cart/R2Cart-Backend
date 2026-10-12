@@ -12,5 +12,8 @@ const imageUpload=folder=>{
  const storage=multer.diskStorage({destination:directory,filename:(req,file,done)=>done(null,`${Date.now()}-${randomUUID()}${extensions[file.mimetype]}`)});
  return multer({storage,limits:{fileSize:5*1024*1024,files:1},fileFilter:(req,file,done)=>extensions[file.mimetype]?done(null,true):done(new AppError('Only JPG, PNG and WebP images are allowed',422))});
 };
-export const productImageUpload=imageUpload('products');
+// Product images go directly to Cloudinary, without creating local files.
+export const productImageUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024,files:1},fileFilter:(req,file,done)=>extensions[file.mimetype]?done(null,true):done(new AppError('Only JPG, PNG and WebP images are allowed',422))});
 export const bannerImageUpload=imageUpload('banners');
+export const storeLogoUpload=imageUpload('settings');
+export const adminAvatarUpload=imageUpload('admins');

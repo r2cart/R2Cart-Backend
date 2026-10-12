@@ -1,4 +1,4 @@
-# Grocify API
+# R2Cart API
 
 Base URL: `/api/v1`. Protected routes require `Authorization: Bearer <access-token>`.
 

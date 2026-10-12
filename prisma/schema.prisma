@@ -61,6 +61,7 @@ model User {
   email         String          @unique
   mobile        String?         @unique
   passwordHash  String?
+  avatarUrl     String?         @db.Text
   role          UserRole        @default(CUSTOMER)
   status        EntityStatus    @default(ACTIVE)
   createdAt     DateTime        @default(now())
@@ -73,6 +74,7 @@ model User {
   tickets       SupportTicket[]
   refreshTokens RefreshToken[]
   searches      SearchHistory[]
+  ratings       ProductRating[]
 
   @@map("users")
 }
@@ -137,6 +139,8 @@ model Product {
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   deletedAt         DateTime?
+  variantGroupId    String?
+  ratings           ProductRating[]
   category          Category       @relation(fields: [categoryId], references: [id])
   images            ProductImage[]
   cartItems         CartItem[]
@@ -145,7 +149,22 @@ model Product {
 
   @@index([categoryId, status])
   @@index([name])
+  @@index([variantGroupId])
+  @@unique([variantGroupId, unit])
   @@map("products")
+}
+
+model ProductRating {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  score     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  @@unique([userId, productId])
+  @@map("product_ratings")
 }
 
 model ProductImage {
