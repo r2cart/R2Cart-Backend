@@ -5,6 +5,10 @@ import {
   removePushSubscription,
   sendNotificationToSubscription,
 } from '../services/notification.service.js';
+import {
+  saveDeviceToken,
+  removeDeviceToken,
+} from '../services/fcm.service.js';
 
 export const getVapidPublicKey = asyncHandler(async (req, res) => {
   if (!env.vapidPublicKey) {
@@ -76,4 +80,35 @@ export const sendTestPush = asyncHandler(async (req, res) => {
   }
 
   ok(res, { success: true }, 'Test push notification sent successfully');
+});
+
+export const registerFcmToken = asyncHandler(async (req, res) => {
+  const { token, role, platform } = req.body;
+  if (!token) {
+    throw new AppError('Valid FCM device token is required', 400);
+  }
+
+  const assignedRole = (req.user?.role === 'ADMIN' || role === 'ADMIN') ? 'ADMIN' : 'CUSTOMER';
+  const userId = (assignedRole === 'ADMIN' && req.user?.role !== 'ADMIN') ? null : (req.user?.id || null);
+  const userAgent = req.headers['user-agent'] || null;
+
+  const saved = await saveDeviceToken({
+    userId,
+    role: assignedRole,
+    token,
+    platform: platform || 'WEB',
+    userAgent,
+  });
+
+  created(res, { id: saved.id, role: saved.role }, 'FCM token registered successfully');
+});
+
+export const unregisterFcmToken = asyncHandler(async (req, res) => {
+  const { token } = req.body;
+  if (!token) {
+    throw new AppError('Token is required', 400);
+  }
+
+  await removeDeviceToken(token);
+  ok(res, null, 'FCM token unregistered successfully');
 });

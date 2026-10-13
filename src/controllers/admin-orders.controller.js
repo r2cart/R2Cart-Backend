@@ -2,6 +2,7 @@ import {prisma} from '../config/prisma.js';
 import {AppError,asyncHandler,ok} from '../utils/response.js';
 import {orderDto} from '../utils/order.js';
 import {notifyCustomerOrderStatusUpdate} from '../services/notification.service.js';
+import {sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
@@ -29,5 +30,6 @@ export const orders={
   });
   ok(res,orderDto(row),'Order status updated');
   notifyCustomerOrderStatusUpdate(row,status,req.body.note).catch(e=>console.error('Customer status push error:',e.message));
+  sendFcmToCustomerStatusUpdate(row,status,req.body.note).catch(e=>console.error('Customer FCM status push error:',e.message));
  })
 };
