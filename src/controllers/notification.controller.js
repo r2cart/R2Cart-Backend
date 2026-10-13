@@ -19,8 +19,8 @@ export const subscribe = asyncHandler(async (req, res) => {
     throw new AppError('Valid push subscription object is required', 400);
   }
 
-  const assignedRole = req.user?.role === 'ADMIN' ? 'ADMIN' : (role === 'ADMIN' ? 'ADMIN' : 'CUSTOMER');
-  const userId = req.user?.id || null;
+  const assignedRole = (req.user?.role === 'ADMIN' || role === 'ADMIN') ? 'ADMIN' : 'CUSTOMER';
+  const userId = (assignedRole === 'ADMIN' && req.user?.role !== 'ADMIN') ? null : (req.user?.id || null);
   const userAgent = req.headers['user-agent'] || null;
 
   const saved = await savePushSubscription({

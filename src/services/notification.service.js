@@ -100,6 +100,7 @@ export async function notifyAdminsNewOrder(order) {
       },
     });
 
+    console.log(`[Push Notification] New order #${order.orderNumber}. Found ${adminSubs.length} admin push subscriptions.`);
     if (!adminSubs.length) return;
 
     const customerName = order.user?.name || order.addressSnapshot?.name || 'A customer';
@@ -109,8 +110,8 @@ export async function notifyAdminsNewOrder(order) {
     const payload = {
       title: '🚨 New Order Received!',
       body: `Order #${order.orderNumber} for ₹${total} (${itemsCount} items) placed by ${customerName}.`,
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-192x192.png',
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
       tag: `new-order-${order.id}`,
       url: `/admin/orders/${order.id}`,
       data: {
@@ -121,9 +122,11 @@ export async function notifyAdminsNewOrder(order) {
       },
     };
 
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       adminSubs.map((sub) => sendNotificationToSubscription(sub, payload))
     );
+    const sentCount = results.filter((r) => r.status === 'fulfilled' && r.value?.success).length;
+    console.log(`[Push Notification] Dispatched order #${order.orderNumber} to admins: ${sentCount}/${adminSubs.length} delivered.`);
   } catch (err) {
     console.error('Error in notifyAdminsNewOrder:', err.message);
   }
@@ -143,8 +146,8 @@ export async function notifyCustomerOrderPlaced(order) {
     const payload = {
       title: '🎉 Order Placed Successfully!',
       body: `Your order #${order.orderNumber} for ₹${total} is confirmed and is being processed.`,
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-192x192.png',
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
       tag: `order-${order.id}`,
       url: `/orders/${order.id}`,
       data: {
@@ -204,8 +207,8 @@ export async function notifyCustomerOrderStatusUpdate(order, newStatus, note = '
     const payload = {
       title: statusConfig.title,
       body: statusConfig.body(order.orderNumber, note),
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-192x192.png',
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
       tag: `order-${order.id}-${newStatus.toLowerCase()}`,
       url: `/orders/${order.id}`,
       data: {
