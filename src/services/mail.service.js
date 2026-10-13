@@ -34,7 +34,7 @@ function getTransporter() {
   return transporter;
 }
 
-async function sendMailViaRelay({to, subject, text, from}) {
+async function sendMailViaRelay({to, subject, text, html, from}) {
   const relayUrl = process.env.MAIL_RELAY_URL || 'https://r2cart.netlify.app/.netlify/functions/mail-relay';
   const response = await fetch(relayUrl, {
     method: 'POST',
@@ -46,6 +46,7 @@ async function sendMailViaRelay({to, subject, text, from}) {
       to,
       subject,
       text,
+      html,
       from: from || `R2Cart <${env.smtpUser || 'r2cartsupport@gmail.com'}>`,
     }),
   });
@@ -57,9 +58,9 @@ async function sendMailViaRelay({to, subject, text, from}) {
   return data;
 }
 
-async function sendMail({to, subject, text}) {
+async function sendMail({to, subject, text, html}) {
   try {
-    return await sendMailViaRelay({to, subject, text});
+    return await sendMailViaRelay({to, subject, text, html});
   } catch (relayError) {
     console.warn('Mail relay failed, trying direct transporter:', relayError.message);
     const transport = getTransporter();
@@ -68,6 +69,7 @@ async function sendMail({to, subject, text}) {
       to,
       subject,
       text,
+      html,
     });
   }
 }
@@ -100,23 +102,58 @@ export async function sendOtpEmail(to, otp, purpose = 'signup') {
     console.log(`[R2Cart OTP] ${purpose.toUpperCase()} code for ${to}: ${otp}`);
   }
 
-  if (env.otpProvider !== 'smtp' && env.otpProvider !== 'resend') {
-    if (env.nodeEnv === 'production' && !env.exposeOtp) throw new AppError('Email delivery is not configured', 503);
-    return;
-  }
-
   const reset = purpose === 'password_reset';
-  const subject = reset ? 'Reset your R2Cart password' : 'Your R2Cart verification code';
+  const subject = reset ? `${otp} is your R2Cart password reset code` : `${otp} is your R2Cart verification code`;
   const body = [
-    reset ? `Use ${otp} to reset your R2Cart password.` : `Your R2Cart verification code is ${otp}.`,
-    '',
-    `This code expires in ${env.otpMinutes} minutes.`,
-    'Never share this code with anyone.',
-    'If you did not request this, you can safely ignore this email.',
+    `Hello,`,
+    ``,
+    reset ? `Use ${otp} to reset your R2Cart account password.` : `Your R2Cart verification code is ${otp}.`,
+    ``,
+    `This code is valid for ${env.otpMinutes} minutes. For security, never share this code with anyone.`,
+    ``,
+    `Regards,`,
+    `Team R2Cart`,
   ].join('\r\n');
 
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <body style="margin:0;padding:24px;background-color:#f6f8f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#183a25;">
+        <table align="center" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:14px;border:1px solid #dbe6de;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.04);">
+          <tr>
+            <td style="background-color:#173a28;padding:24px 28px;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:900;letter-spacing:-0.5px;">R2<span style="color:#22c55e;">Cart</span></h1>
+              <p style="margin:4px 0 0;color:#9bc9ab;font-size:12px;">Fresh Groceries Delivered Fast</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px;">
+              <h2 style="margin:0 0 12px;color:#183a25;font-size:17px;font-weight:700;">
+                ${reset ? 'Password Reset Verification' : 'Email Verification Code'}
+              </h2>
+              <p style="margin:0 0 20px;color:#495c50;font-size:14px;line-height:1.5;">
+                ${reset ? 'Please enter this one-time code to reset your password:' : 'Thank you for choosing R2Cart. Use this verification code to complete your signup:'}
+              </p>
+              <div style="background-color:#eef8f1;border:1.5px dashed #22c55e;border-radius:10px;padding:18px;text-align:center;margin:0 0 20px;">
+                <div style="font-size:10px;color:#15803d;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Your 6-Digit Code</div>
+                <div style="font-size:32px;font-weight:900;letter-spacing:6px;color:#173a28;font-family:monospace;">${otp}</div>
+              </div>
+              <p style="margin:0 0 6px;color:#6d7f73;font-size:12px;">⏱️ Valid for <strong>${env.otpMinutes} minutes</strong>.</p>
+              <p style="margin:0;color:#6d7f73;font-size:12px;">🔒 If you did not request this code, you can safely ignore this email.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f9fbf9;padding:16px 28px;border-top:1px solid #eef2ee;text-align:center;">
+              <p style="margin:0;color:#899a8f;font-size:11px;">R2Cart Online Grocery Delivery · <a href="mailto:r2cartsupport@gmail.com" style="color:#16a34a;text-decoration:none;">r2cartsupport@gmail.com</a></p>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
+
   try {
-    await sendMail({to, subject, text: body});
+    await sendMail({to, subject, text: body, html});
   } catch (error) {
     if (env.resendApiKey) throw error;
     handleMailError(error);
