@@ -1,7 +1,8 @@
 import {prisma} from '../config/prisma.js';
 import {catalogRepository} from '../repositories/catalog.repository.js';
-import {AppError,asyncHandler,ok} from '../utils/response.js';
-import {productDto} from '../utils/order.js';
+import {AppError,asyncHandler,created,ok} from '../utils/response.js';
+import {productDto,ticketNumber} from '../utils/order.js';
+import {sendContactInquiryEmail} from '../services/mail.service.js';
 export const categories=asyncHandler(async(req,res)=>ok(res,await catalogRepository.categories()));
 export const banners=asyncHandler(async(req,res)=>ok(res,await catalogRepository.banners()));
 export const products=asyncHandler(async(req,res)=>{
@@ -19,3 +20,63 @@ export const product=asyncHandler(async(req,res)=>{const row=await catalogReposi
 export const suggestions=asyncHandler(async(req,res)=>{const q=String(req.query.q||'');const rows=await prisma.product.findMany({where:{name:{contains:q},status:'ACTIVE',deletedAt:null},select:{id:true,name:true},take:8});if(req.user&&q)await prisma.searchHistory.create({data:{userId:req.user.id,query:q}});ok(res,rows)});
 export const delivery=asyncHandler(async(req,res)=>ok(res,await prisma.deliveryArea.findMany({where:{status:'ACTIVE'}})));
 export const settings=asyncHandler(async(req,res)=>ok(res,await prisma.storeSetting.findUnique({where:{id:1}})));
+export const contactInquiry=asyncHandler(async(req,res)=>{
+ const name=String(req.body.name||'').trim();
+ const email=String(req.body.email||'').trim().toLowerCase();
+ const subject=String(req.body.subject||'').trim();
+ const message=String(req.body.message||'').trim();
+
+ if(name.length<2)throw new AppError('Please provide your full name',422);
+ if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new AppError('Please provide a valid email address',422);
+ if(subject.length<3)throw new AppError('Subject must be at least 3 characters',422);
+ if(message.length<5)throw new AppError('Message must be at least 5 characters',422);
+
+ let user=await prisma.user.findUnique({where:{email}});
+ if(!user){
+  user=await prisma.user.create({
+   data:{
+    name,
+    email,
+    role:'CUSTOMER',
+    status:'ACTIVE'
+   }
+  });
+ }
+
+ const ticket=await prisma.supportTicket.create({
+  data:{
+   ticketNumber:ticketNumber(),
+   userId:user.id,
+   issueType:'Contact Inquiry',
+   subject:`[Contact Us] ${subject}`,
+   description:`Inquiry from ${name} (${email}):\n\n${message}`,
+   status:'OPEN',
+   messages:{
+    create:{
+     message,
+     isAdmin:false,
+     senderId:user.id
+    }
+   }
+  },
+  include:{
+   user:{select:{id:true,name:true,email:true,mobile:true}}
+  }
+ });
+
+ let emailNotificationSent=false;
+ try{
+  emailNotificationSent=await sendContactInquiryEmail({
+   name,
+   email,
+   subject,
+   message,
+   ticketNumber:ticket.ticketNumber
+  });
+ }catch(error){
+  console.error(`Contact inquiry email notification failed for ${ticket.ticketNumber}:`,error.message);
+ }
+
+ created(res,{ticketNumber:ticket.ticketNumber,emailNotificationSent},'Your message has been sent successfully. Our support team will get back to you shortly.');
+});
+

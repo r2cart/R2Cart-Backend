@@ -195,3 +195,70 @@ export async function sendSupportTicketEmail({ticketNumber, issueType, subject, 
     return false;
   }
 }
+
+export async function sendContactInquiryEmail({name, email, subject, message, ticketNumber}) {
+  const targetEmail = env.supportEmail || 'r2cartsupport@gmail.com';
+  if (env.otpProvider !== 'smtp' && env.otpProvider !== 'resend') {
+    console.log(`R2Cart contact inquiry from ${name} (${email}) for ${targetEmail}`);
+    return false;
+  }
+
+  try {
+    await sendMail({
+      to: targetEmail,
+      subject: `[Contact Us] ${ticketNumber ? `${ticketNumber} · ` : ''}${subject}`,
+      text: [
+        'A new message has been submitted via the Contact Us form on R2Cart.',
+        '',
+        `From: ${name}`,
+        `Email: ${email}`,
+        `Subject: ${subject}`,
+        ...(ticketNumber ? [`Ticket: ${ticketNumber}`] : []),
+        '',
+        'Message:',
+        message,
+        '',
+        'Open the R2Cart Admin support panel to review and resolve this inquiry.',
+      ].join('\r\n'),
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+          <div style="background: #168447; color: #fff; padding: 20px 24px;">
+            <h2 style="margin: 0; font-size: 20px;">New Contact Us Inquiry</h2>
+            <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.9;">R2Cart Customer Desk</p>
+          </div>
+          <div style="padding: 24px;">
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-size: 13px; width: 120px;"><strong>Sender Name:</strong></td>
+                <td style="padding: 6px 0; font-size: 14px; font-weight: bold;">${name}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-size: 13px;"><strong>Sender Email:</strong></td>
+                <td style="padding: 6px 0; font-size: 14px;"><a href="mailto:${email}" style="color: #168447; text-decoration: none;">${email}</a></td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-size: 13px;"><strong>Subject:</strong></td>
+                <td style="padding: 6px 0; font-size: 14px;">${subject}</td>
+              </tr>
+              ${ticketNumber ? `
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-size: 13px;"><strong>Ticket Number:</strong></td>
+                <td style="padding: 6px 0; font-size: 14px;"><span style="background: #e9f7ef; color: #168447; padding: 2px 8px; border-radius: 6px; font-weight: bold;">${ticketNumber}</span></td>
+              </tr>
+              ` : ''}
+            </table>
+            <div style="background: #f8fafc; border-left: 4px solid #168447; padding: 16px; border-radius: 4px; margin-bottom: 20px;">
+              <p style="margin: 0; font-size: 14px; white-space: pre-wrap;">${message}</p>
+            </div>
+            <p style="font-size: 12px; color: #64748b; margin: 0;">This inquiry has been logged in the R2Cart Admin Support panel so the admin can review, reply, and resolve it.</p>
+          </div>
+        </div>
+      `,
+    });
+    return true;
+  } catch (error) {
+    console.error(`Contact inquiry email failed for ticket ${ticketNumber}:`, error.message);
+    return false;
+  }
+}
+

@@ -75,6 +75,7 @@ model User {
   refreshTokens RefreshToken[]
   searches      SearchHistory[]
   ratings       ProductRating[]
+  pushSubscriptions PushSubscription[]
 
   @@map("users")
 }
@@ -400,6 +401,7 @@ model StoreSetting {
   freeDeliveryThreshold Decimal  @db.Decimal(10, 2)
   estimatedDelivery     String
   notifications         Json
+  policies              Json?
   updatedAt             DateTime @updatedAt
 
   @@map("store_settings")
@@ -444,4 +446,21 @@ model SearchHistory {
 
   @@index([userId, createdAt])
   @@map("search_history")
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String?
+  role      String   @default("CUSTOMER")
+  endpoint  String   @db.VarChar(500) @unique
+  p256dh    String   @db.Text
+  auth      String   @db.Text
+  userAgent String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([role])
+  @@map("push_subscriptions")
 }
