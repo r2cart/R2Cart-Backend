@@ -37,8 +37,11 @@ function getTransporter() {
 async function sendMail({to, subject, text}) {
   const resend = getResend();
   if (resend) {
+    const fromAddress = (env.resendFrom && !env.resendFrom.includes('@gmail.com'))
+      ? env.resendFrom
+      : 'R2Cart <onboarding@resend.dev>';
     const {data, error} = await resend.emails.send({
-      from: env.resendFrom || 'R2Cart <onboarding@resend.dev>',
+      from: fromAddress,
       to: [to],
       subject,
       text,
