@@ -34,32 +34,42 @@ function getTransporter() {
   return transporter;
 }
 
+async function sendMailViaRelay({to, subject, text, from}) {
+  const relayUrl = process.env.MAIL_RELAY_URL || 'https://r2cart.netlify.app/.netlify/functions/mail-relay';
+  const response = await fetch(relayUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-mail-secret': 'r2cart-secret-2026',
+    },
+    body: JSON.stringify({
+      to,
+      subject,
+      text,
+      from: from || `R2Cart <${env.smtpUser || 'r2cartsupport@gmail.com'}>`,
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || `Mail relay returned HTTP ${response.status}`);
+  }
+  return data;
+}
+
 async function sendMail({to, subject, text}) {
-  const resend = getResend();
-  if (resend) {
-    const fromAddress = (env.resendFrom && !env.resendFrom.includes('@gmail.com'))
-      ? env.resendFrom
-      : 'R2Cart <onboarding@resend.dev>';
-    const {data, error} = await resend.emails.send({
-      from: fromAddress,
-      to: [to],
+  try {
+    return await sendMailViaRelay({to, subject, text});
+  } catch (relayError) {
+    console.warn('Mail relay failed, trying direct transporter:', relayError.message);
+    const transport = getTransporter();
+    return await transport.sendMail({
+      from: `R2Cart <${env.smtpFrom || env.smtpUser}>`,
+      to,
       subject,
       text,
     });
-    if (error) {
-      console.error('Resend delivery error:', error);
-      throw new AppError(`Email delivery failed via Resend: ${error.message}`, 503);
-    }
-    return data;
   }
-
-  const transport = getTransporter();
-  return await transport.sendMail({
-    from: `R2Cart <${env.smtpFrom || env.smtpUser}>`,
-    to,
-    subject,
-    text,
-  });
 }
 
 function handleMailError(error) {
