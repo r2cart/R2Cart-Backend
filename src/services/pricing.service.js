@@ -19,7 +19,11 @@ export async function calculateCart(tx,userId,couponCode,rules){
  if(!cart?.items.length)throw new AppError('Your cart is empty',400);
  let itemTotal=0,subtotal=0;
  for(const item of cart.items){
-  if(item.product.status!=='ACTIVE'||item.product.stock<item.quantity){if(item.product.stock<=0)throw new AppError(`${item.product.name} is currently out of stock`,409);throw new AppError(`${item.product.name} has only ${item.product.stock} remaining in stock`,409);}
+  if(!item.product||item.product.deletedAt||item.product.status!=='ACTIVE'||item.product.stock<item.quantity){
+   if(!item.product||item.product.deletedAt||item.product.status!=='ACTIVE')throw new AppError(`${item.product?.name||'Item'} is currently unavailable`,409);
+   if(item.product.stock<=0)throw new AppError(`${item.product.name} is currently out of stock`,409);
+   throw new AppError(`${item.product.name} has only ${item.product.stock} remaining in stock`,409);
+  }
   itemTotal+=Number(item.product.mrp)*item.quantity;subtotal+=Number(item.product.price)*item.quantity;
  }
  const delivery=rules||await resolveDeliveryRules(tx);
