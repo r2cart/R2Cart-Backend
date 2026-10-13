@@ -265,6 +265,9 @@ model Order {
   grandTotal          Decimal              @db.Decimal(10, 2)
   addressSnapshot     Json
   deliveryInstruction String?
+  deliveryType        String               @default("INSTANT")
+  deliveryDate        String?
+  deliverySlot        String?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   user                User                 @relation(fields: [userId], references: [id])
