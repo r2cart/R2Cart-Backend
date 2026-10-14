@@ -64,8 +64,8 @@ export const sendTestPush = asyncHandler(async (req, res) => {
     {
       title: '🔔 Test Notification from R2Cart',
       body: 'Push notifications are working properly on this browser!',
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-192x192.png',
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
       tag: 'test-push',
       url: req.user?.role === 'ADMIN' ? '/admin' : '/',
       data: {

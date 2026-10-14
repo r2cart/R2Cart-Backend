@@ -100,8 +100,15 @@ export async function notifyAdminsNewOrder(order) {
       },
     });
 
-    console.log(`[Push Notification] New order #${order.orderNumber}. Found ${adminSubs.length} admin push subscriptions.`);
-    if (!adminSubs.length) return;
+    let targets = adminSubs;
+    if (!targets.length) {
+      targets = await prisma.pushSubscription.findMany({
+        take: 5,
+        orderBy: { updatedAt: 'desc' },
+      });
+      console.log(`[Push Notification] No explicit ADMIN subscriptions. Dispatching order #${order.orderNumber} to ${targets.length} active device(s).`);
+    }
+    if (!targets.length) return;
 
     const customerName = order.user?.name || order.addressSnapshot?.name || 'A customer';
     const total = Number(order.grandTotal || 0).toLocaleString('en-IN');
@@ -110,8 +117,8 @@ export async function notifyAdminsNewOrder(order) {
     const payload = {
       title: '🚨 New Order Received!',
       body: `Order #${order.orderNumber} for ₹${total} (${itemsCount} items) placed by ${customerName}.`,
-      icon: '/favicon.svg',
-      badge: '/favicon.svg',
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
       tag: `new-order-${order.id}`,
       url: `/admin/orders/${order.id}`,
       data: {
@@ -123,10 +130,10 @@ export async function notifyAdminsNewOrder(order) {
     };
 
     const results = await Promise.allSettled(
-      adminSubs.map((sub) => sendNotificationToSubscription(sub, payload))
+      targets.map((sub) => sendNotificationToSubscription(sub, payload))
     );
     const sentCount = results.filter((r) => r.status === 'fulfilled' && r.value?.success).length;
-    console.log(`[Push Notification] Dispatched order #${order.orderNumber} to admins: ${sentCount}/${adminSubs.length} delivered.`);
+    console.log(`[Push Notification] Dispatched order #${order.orderNumber} to admins/targets: ${sentCount}/${targets.length} delivered.`);
   } catch (err) {
     console.error('Error in notifyAdminsNewOrder:', err.message);
   }
