@@ -1,6 +1,10 @@
 import {v2 as cloudinary} from 'cloudinary';
 import {AppError} from '../utils/response.js';
 
+export function isCloudinaryConfigured(){
+ return Boolean(process.env.CLOUDINARY_CLOUD_NAME?.trim()&&process.env.CLOUDINARY_API_KEY?.trim()&&process.env.CLOUDINARY_API_SECRET?.trim());
+}
+
 function configure(){
  const cloudName=process.env.CLOUDINARY_CLOUD_NAME?.trim();
  const apiKey=process.env.CLOUDINARY_API_KEY?.trim();
@@ -18,23 +22,23 @@ export function productImagePublicId(value){
   const prefix=`/${cloudName}/image/upload/`;
   if(!url.pathname.startsWith(prefix))return null;
   const path=decodeURIComponent(url.pathname.slice(prefix.length));
-  const match=path.match(/^(?:.*\/)?v\d+\/(R2Cart\/Categories\/.+)$/);
+  const match=path.match(/^(?:.*\/)?v\d+\/(R2Cart\/.+)$/);
   const id=(match?.[1]||path).replace(/\.[a-z0-9]+$/i,'');
-  return id.startsWith('R2Cart/Categories/')&&!id.split('/').some(part=>part==='..'||part==='.')?id:null;
+  return id.startsWith('R2Cart/')&&!id.split('/').some(part=>part==='..'||part==='.')?id:null;
  }catch{return null}
 }
 
 export async function deleteProductImage(publicId){
- if(!publicId?.startsWith('R2Cart/Categories/'))throw new AppError('Invalid product image identifier',422);
+ if(!publicId?.startsWith('R2Cart/'))throw new AppError('Invalid image identifier',422);
  configure();
  try{
   const result=await cloudinary.uploader.destroy(publicId,{resource_type:'image',type:'upload',invalidate:true,timeout:60000});
   if(!['ok','not found'].includes(result?.result))throw new Error('Deletion not confirmed');
- }catch{throw new AppError('Cloudinary image deletion failed. Product has not been deleted; check your connection and retry.',502)}
+ }catch{throw new AppError('Cloudinary image deletion failed. Check your connection and retry.',502)}
 }
 
 export async function deleteProductImages(publicIds){
- const valid=publicIds.filter(id=>id?.startsWith('R2Cart/Categories/'));
+ const valid=publicIds.filter(id=>id?.startsWith('R2Cart/'));
  if(!valid.length)return;
  configure();
  try{
@@ -69,5 +73,25 @@ export async function uploadProductImage(source,categorySlug){
   return {url:result.secure_url,publicId:result.public_id};
  }catch{
   throw new AppError('Product image upload failed. Check Cloudinary credentials and your connection, then try again.',502);
+ }
+}
+
+export async function uploadMedia(source,folder='General'){
+ configure();
+ if(!source||(typeof source!=='string'&&!source.length))throw new AppError('Choose an image to upload',422);
+ const cleanFolder=String(folder||'General').replace(/[^a-z0-9_-]/gi,'');
+ const assetFolder=`R2Cart/${cleanFolder}`;
+ try{
+  if(typeof source==='string'&&/^https?:\/\//i.test(source)){
+   const result=await cloudinary.uploader.upload(source,{resource_type:'image',asset_folder:assetFolder,use_asset_folder_as_public_id_prefix:true,timeout:60000});
+   return {url:result.secure_url,publicId:result.public_id};
+  }
+  const result=await new Promise((resolve,reject)=>{
+   const stream=cloudinary.uploader.upload_stream({resource_type:'image',asset_folder:assetFolder,use_asset_folder_as_public_id_prefix:true,timeout:60000},(error,result)=>error?reject(error):resolve(result));
+   stream.end(source);
+  });
+  return {url:result.secure_url,publicId:result.public_id};
+ }catch(err){
+  throw new AppError(`Cloudinary media upload failed: ${err.message}`,502);
  }
 }

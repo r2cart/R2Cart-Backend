@@ -1,14 +1,57 @@
 import bcrypt from 'bcryptjs';
 import {randomUUID} from 'node:crypto';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
 import {variantData} from '../utils/variants.js';
 import {prisma} from '../config/prisma.js';
+import {env} from '../config/env.js';
 import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
 import {deleteProduct,deleteAllProducts} from '../services/product-deletion.service.js';
 import {couponData} from '../utils/coupon.js';
-export const uploadProductImage=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose an image to upload',422);const slug=String(req.body.category||'').trim();if(!slug)throw new AppError('Select a category before uploading the product image',422);const category=await prisma.category.findUnique({where:{slug},select:{slug:true}});if(!category)throw new AppError('Product category not found',404);created(res,await uploadProductMedia(req.file.buffer,category.slug),'Product image uploaded to its Cloudinary category folder')});
-export const uploadBannerImage=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose an image to upload',422);created(res,{url:`${req.protocol}://${req.get('host')}/uploads/banners/${req.file.filename}`},'Banner image uploaded')});
-export const uploadStoreLogo=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose a logo to upload',422);created(res,{url:`${req.protocol}://${req.get('host')}/uploads/settings/${req.file.filename}`},'Store logo uploaded')});
+import {uploadProductImage as uploadProductMedia,uploadMedia,isCloudinaryConfigured} from '../services/image.service.js';
+
+const saveLocalFallback=(buffer,folder)=>{
+ const dir=resolve(env.uploadDir,folder);
+ mkdirSync(dir,{recursive:true});
+ const filename=`${Date.now()}-${randomUUID()}.jpg`;
+ writeFileSync(resolve(dir,filename),buffer);
+ return filename;
+};
+
+export const uploadProductImage=asyncHandler(async(req,res)=>{
+ if(!req.file)throw new AppError('Choose an image to upload',422);
+ const slug=String(req.body.category||'').trim();
+ if(!slug)throw new AppError('Select a category before uploading the product image',422);
+ const category=await prisma.category.findUnique({where:{slug},select:{slug:true}});
+ if(!category)throw new AppError('Product category not found',404);
+ if(isCloudinaryConfigured()){
+  const result=await uploadProductMedia(req.file.buffer,category.slug);
+  return created(res,result,'Product image uploaded to Cloudinary');
+ }
+ const filename=saveLocalFallback(req.file.buffer,'products');
+ created(res,{url:`${req.protocol}://${req.get('host')}/uploads/products/${filename}`},'Product image uploaded locally');
+});
+
+export const uploadBannerImage=asyncHandler(async(req,res)=>{
+ if(!req.file)throw new AppError('Choose an image to upload',422);
+ if(isCloudinaryConfigured()){
+  const result=await uploadMedia(req.file.buffer,'Banners');
+  return created(res,{url:result.url,publicId:result.publicId},'Banner image uploaded to Cloudinary');
+ }
+ const filename=saveLocalFallback(req.file.buffer,'banners');
+ created(res,{url:`${req.protocol}://${req.get('host')}/uploads/banners/${filename}`},'Banner image uploaded locally');
+});
+
+export const uploadStoreLogo=asyncHandler(async(req,res)=>{
+ if(!req.file)throw new AppError('Choose a logo to upload',422);
+ if(isCloudinaryConfigured()){
+  const result=await uploadMedia(req.file.buffer,'Settings');
+  return created(res,{url:result.url,publicId:result.publicId},'Store logo uploaded to Cloudinary');
+ }
+ const filename=saveLocalFallback(req.file.buffer,'settings');
+ created(res,{url:`${req.protocol}://${req.get('host')}/uploads/settings/${filename}`},'Store logo uploaded locally');
+});
 const productData=body=>{
  const status=String(body.status||'ACTIVE').trim().toUpperCase();
  if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Invalid product status',422);

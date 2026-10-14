@@ -1,6 +1,11 @@
 import bcrypt from 'bcryptjs';
+import {randomUUID} from 'node:crypto';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
 import {prisma} from '../config/prisma.js';
+import {env} from '../config/env.js';
 import {AppError,asyncHandler,ok} from '../utils/response.js';
+import {uploadMedia,isCloudinaryConfigured} from '../services/image.service.js';
 export const profileSelect={id:true,name:true,email:true,mobile:true,role:true,avatarUrl:true,createdAt:true,updatedAt:true};
 export const get=asyncHandler(async(req,res)=>ok(res,await prisma.user.findUnique({where:{id:req.user.id},select:profileSelect})));
 export const update=asyncHandler(async(req,res)=>{
@@ -12,7 +17,21 @@ export const update=asyncHandler(async(req,res)=>{
  const existing=await prisma.user.findFirst({where:{id:{not:req.user.id},OR:[{email},...(mobile?[{mobile}]:[])]},select:{id:true}});if(existing)throw new AppError('Email or mobile already belongs to another account',409);
  ok(res,await prisma.user.update({where:{id:req.user.id},data:{name,email,mobile},select:profileSelect}),'Profile saved');
 });
-export const avatar=asyncHandler(async(req,res)=>{if(!req.file)throw new AppError('Choose a profile photo',422);const avatarUrl=`/uploads/admins/${req.file.filename}`;ok(res,await prisma.user.update({where:{id:req.user.id},data:{avatarUrl},select:profileSelect}),'Profile photo saved')});
+export const avatar=asyncHandler(async(req,res)=>{
+ if(!req.file)throw new AppError('Choose a profile photo',422);
+ let avatarUrl;
+ if(isCloudinaryConfigured()){
+  const result=await uploadMedia(req.file.buffer,'Admins');
+  avatarUrl=result.url;
+ }else{
+  const dir=resolve(env.uploadDir,'admins');
+  mkdirSync(dir,{recursive:true});
+  const filename=`${Date.now()}-${randomUUID()}.jpg`;
+  writeFileSync(resolve(dir,filename),req.file.buffer);
+  avatarUrl=`/uploads/admins/${filename}`;
+ }
+ ok(res,await prisma.user.update({where:{id:req.user.id},data:{avatarUrl},select:profileSelect}),'Profile photo saved');
+});
 export const removeAvatar=asyncHandler(async(req,res)=>ok(res,await prisma.user.update({where:{id:req.user.id},data:{avatarUrl:null},select:profileSelect}),'Profile photo removed'));
 export const password=asyncHandler(async(req,res)=>{
  const current=String(req.body.currentPassword||''),next=String(req.body.password||'');
