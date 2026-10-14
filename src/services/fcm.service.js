@@ -64,8 +64,8 @@ export async function sendFcmMulticast({ tokens, notification, data = {} }) {
           link: data.url || '/',
         },
         notification: {
-          icon: '/favicon.svg',
-          badge: '/favicon.svg',
+          icon: '/r2cart-logo.png',
+          badge: '/r2cart-logo.png',
         },
       },
     });

@@ -153,8 +153,8 @@ export async function notifyCustomerOrderPlaced(order) {
     const payload = {
       title: '🎉 Order Placed Successfully!',
       body: `Your order #${order.orderNumber} for ₹${total} is confirmed and is being processed.`,
-      icon: '/favicon.svg',
-      badge: '/favicon.svg',
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
       tag: `order-${order.id}`,
       url: `/orders/${order.id}`,
       data: {
@@ -214,8 +214,8 @@ export async function notifyCustomerOrderStatusUpdate(order, newStatus, note = '
     const payload = {
       title: statusConfig.title,
       body: statusConfig.body(order.orderNumber, note),
-      icon: '/favicon.svg',
-      badge: '/favicon.svg',
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
       tag: `order-${order.id}-${newStatus.toLowerCase()}`,
       url: `/orders/${order.id}`,
       data: {
