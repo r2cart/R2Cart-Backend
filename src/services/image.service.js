@@ -95,3 +95,57 @@ export async function uploadMedia(source,folder='General'){
   throw new AppError(`Cloudinary media upload failed: ${err.message}`,502);
  }
 }
+
+export async function uploadDeliveryProof(source, orderId, proofId) {
+ configure();
+ if (!source || (typeof source !== 'string' && !source.length)) {
+  throw new AppError('Choose an image to upload as delivery proof', 422);
+ }
+ const cleanOrderId = String(orderId || 'general').replace(/[^a-z0-9_-]/gi, '');
+ const cleanProofId = String(proofId || Date.now()).replace(/[^a-z0-9_-]/gi, '');
+ const assetFolder = `r2cart/delivery-proofs/${cleanOrderId}`;
+ const publicId = `${assetFolder}/${cleanProofId}`;
+
+ try {
+  if (typeof source === 'string' && /^https?:\/\//i.test(source)) {
+   const result = await cloudinary.uploader.upload(source, {
+    resource_type: 'image',
+    public_id: publicId,
+    asset_folder: assetFolder,
+    overwrite: true,
+    timeout: 60000
+   });
+   return { url: result.secure_url, publicId: result.public_id, format: result.format, bytes: result.bytes };
+  }
+  const result = await new Promise((resolve, reject) => {
+   const stream = cloudinary.uploader.upload_stream(
+    {
+     resource_type: 'image',
+     public_id: publicId,
+     asset_folder: assetFolder,
+     overwrite: true,
+     timeout: 60000
+    },
+    (error, result) => (error ? reject(error) : resolve(result))
+   );
+   stream.end(source);
+  });
+  return { url: result.secure_url, publicId: result.public_id, format: result.format, bytes: result.bytes };
+ } catch (err) {
+  throw new AppError(`Delivery proof upload failed: ${err.message}`, 502);
+ }
+}
+
+export function getDeliveryProofUrl(publicId, fallbackUrl) {
+ if (!publicId) return fallbackUrl;
+ try {
+  configure();
+  return cloudinary.url(publicId, {
+   sign_url: true,
+   secure: true,
+   expires_at: Math.floor(Date.now() / 1000) + 7200
+  });
+ } catch {
+  return fallbackUrl;
+ }
+}

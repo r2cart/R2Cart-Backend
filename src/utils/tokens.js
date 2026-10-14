@@ -6,4 +6,4 @@ export const accessToken=user=>jwt.sign({sub:user.id,role:user.role,email:user.e
 export const refreshToken=user=>jwt.sign({sub:user.id,type:'refresh'},env.refreshSecret,{expiresIn:env.refreshExpires});
 export const verifyAccess=token=>jwt.verify(token,env.accessSecret);
 export const verifyRefresh=token=>jwt.verify(token,env.refreshSecret);
-export const refreshExpiry=()=>new Date(Date.now()+30*24*60*60*1000);
+export const refreshExpiry=()=>new Date(Date.now()+90*24*60*60*1000);

@@ -11,6 +11,18 @@ enum UserRole {
   CUSTOMER
   ADMIN
   MANAGER
+  SUPER_ADMIN
+  DELIVERY_PERSON
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  ACCEPTED
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERY_PROOF_PENDING
+  DELIVERED
+  DELIVERY_FAILED
 }
 
 enum EntityStatus {
@@ -77,6 +89,27 @@ model User {
   ratings       ProductRating[]
   pushSubscriptions PushSubscription[]
   deviceTokens  DeviceToken[]
+  staffRole     String?
+  permissions   Json?
+  isStaffActive Boolean         @default(true)
+  dutyStatus    String?         @default("OFF_DUTY")
+  assignedVillageIds Json?
+  vehicleType   String?
+  vehicleNumber String?
+  currentLatitude  Decimal?     @db.Decimal(10, 8)
+  currentLongitude Decimal?     @db.Decimal(11, 8)
+  lastLoginAt   DateTime?
+  lastLoginIp   String?
+  auditLogs     AuditLog[]
+
+  assignedDeliveries DeliveryAssignment[] @relation("AssignedDeliveries")
+  createdAssignments DeliveryAssignment[] @relation("AssignmentsCreated")
+  deliveryProofs     DeliveryProof[]
+  verifiedProofs     DeliveryProof[]      @relation("VerifiedProofs")
+  deliveryStatusLogs DeliveryStatusLog[]
+  codCollections     CodCollection[]
+  codSettlements     CodSettlement[]      @relation("SettledCollections")
+  adminSettlements   CodSettlement[]      @relation("AdminSettlements")
 
   @@map("users")
 }
@@ -142,12 +175,16 @@ model Product {
   updatedAt         DateTime       @updatedAt
   deletedAt         DateTime?
   variantGroupId    String?
+  hasExpiry         Boolean        @default(false)
+  expiryDate        DateTime?
+  batchNumber       String?
   ratings           ProductRating[]
   category          Category       @relation(fields: [categoryId], references: [id])
   images            ProductImage[]
   cartItems         CartItem[]
   favorites         Favorite[]
   orderItems        OrderItem[]
+  inventoryLogs     InventoryLog[]
 
   @@index([categoryId, status])
   @@index([name])
@@ -226,6 +263,10 @@ model Coupon {
   usageLimit      Int?
   perUserLimit    Int           @default(1)
   usageCount      Int           @default(0)
+  isFirstOrderOnly Boolean      @default(false)
+  targetUserIds   Json?
+  campaignName    String?
+  description     String?
   startsAt        DateTime
   expiresAt       DateTime
   status          EntityStatus  @default(ACTIVE)
@@ -278,6 +319,10 @@ model Order {
   history             OrderStatusHistory[]
   payment             Payment?
   couponUsage         CouponUsage?
+  deliveryAssignments DeliveryAssignment[]
+  deliveryProofs      DeliveryProof[]
+  deliveryStatusLogs  DeliveryStatusLog[]
+  codCollection       CodCollection?
 
   @@index([userId, createdAt])
   @@index([status])
@@ -344,15 +389,18 @@ model Banner {
 }
 
 model DeliveryArea {
-  id                    String       @id @default(cuid())
+  id                    String            @id @default(cuid())
   name                  String
   pincodes              Json
-  radiusKm              Decimal?     @db.Decimal(6, 2)
-  minimumOrder          Decimal      @db.Decimal(10, 2)
-  deliveryFee           Decimal      @db.Decimal(10, 2)
-  freeDeliveryThreshold Decimal      @db.Decimal(10, 2)
+  radiusKm              Decimal?          @db.Decimal(6, 2)
+  minimumOrder          Decimal           @db.Decimal(10, 2)
+  deliveryFee           Decimal           @db.Decimal(10, 2)
+  freeDeliveryThreshold Decimal           @db.Decimal(10, 2)
   estimatedMinutes      Int
-  status                EntityStatus @default(ACTIVE)
+  isPaused              Boolean           @default(false)
+  schedule              Json?
+  status                EntityStatus      @default(ACTIVE)
+  villages              DeliveryVillage[]
 
   @@map("delivery_areas")
 }
@@ -403,6 +451,22 @@ model StoreSetting {
   estimatedDelivery     String
   notifications         Json
   policies              Json?
+  autoHideOutOfStock    Boolean  @default(false)
+  globalDeliveryRadius  Decimal? @db.Decimal(6, 2) @default(5.00)
+  isOrderPaused         Boolean  @default(false)
+  orderPauseMessage     String?  @db.Text
+  holidays              Json?
+  weekdayHours          Json?
+  prepTimeMinutes       Int      @default(30)
+  seasonalSchedules     Json?
+  specialDaySchedules   Json?
+  allowAfterHoursScheduledOrders Boolean @default(true)
+  isSchedulingEnabled   Boolean  @default(true)
+  advanceBookingDays    Int      @default(4)
+  sameDayCutoffMinutes  Int      @default(60)
+  allowCod              Boolean  @default(true)
+  allowScheduled        Boolean  @default(true)
+  emergencySettings     Json?
   updatedAt             DateTime @updatedAt
 
   @@map("store_settings")
@@ -481,3 +545,264 @@ model DeviceToken {
   @@index([role])
   @@map("device_tokens")
 }
+
+model DeliveryVillage {
+  id                    String        @id @default(cuid())
+  areaId                String?
+  name                  String
+  pincode               String?
+  overrideMode          String        @default("COMPLETE") // "COMPLETE" (Mode A) or "PARTIAL" (Mode B)
+  deliveryFee           Decimal       @db.Decimal(10, 2)
+  minimumOrder          Decimal       @db.Decimal(10, 2)
+  freeDeliveryThreshold Decimal       @db.Decimal(10, 2)
+  radiusKm              Decimal?      @db.Decimal(6, 2) @default(5.00)
+  schedule              String?
+  deliveryHours         Json?
+  customSlots           Json?
+  allowCod              Boolean       @default(true)
+  allowScheduled        Boolean       @default(true)
+  estimatedMinutes      Int           @default(30)
+  maxCapacity           Int?
+  emergencyRestrictions Json?
+  seasonalRules         Json?
+  isPaused              Boolean       @default(false)
+  status                EntityStatus  @default(ACTIVE)
+  notes                 String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  area                  DeliveryArea? @relation(fields: [areaId], references: [id], onDelete: SetNull)
+
+  @@index([name])
+  @@index([areaId])
+  @@map("delivery_villages")
+}
+
+model EmergencyLog {
+  id            String    @id @default(cuid())
+  action        String    // "ACTIVATE" | "DEACTIVATE" | "UPDATE" | "AUTO_EXPIRE"
+  type          String    // "IMMEDIATE_ONLY" | "SCHEDULED_ONLY" | "ALL_ORDERS" | "SELECTED_AREAS" | "STORE_CLOSE"
+  reason        String
+  customReason  String?
+  message       String?   @db.Text
+  affectedAreas Json?
+  startTime     DateTime?
+  endTime       DateTime?
+  adminId       String?
+  adminName     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([createdAt])
+  @@map("emergency_logs")
+}
+
+model InventoryLog {
+  id            String   @id @default(cuid())
+  productId     String
+  type          String
+  previousStock Int
+  newStock      Int
+  quantityDiff  Int
+  reason        String
+  adminId       String?
+  adminName     String?
+  orderId       String?
+  createdAt     DateTime @default(now())
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+  @@index([type])
+  @@map("inventory_logs")
+}
+
+model DeliverySlot {
+  id            String       @id @default(cuid())
+  label         String
+  startTime     String
+  endTime       String
+  maxOrders     Int          @default(20)
+  cutoffMinutes Int          @default(60)
+  daysOfWeek    Json?
+  position      Int          @default(0)
+  status        EntityStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@map("delivery_slots")
+}
+
+model MarketingCampaign {
+  id        String       @id @default(cuid())
+  name      String
+  type      String
+  title     String
+  subtitle  String?
+  badge     String?
+  content   String?      @db.Text
+  imageUrl  String?      @db.Text
+  linkUrl   String?
+  bgColor   String?
+  textColor String?
+  startsAt  DateTime
+  expiresAt DateTime
+  status    EntityStatus @default(ACTIVE)
+  position  Int          @default(0)
+  metadata  Json?
+  viewCount Int          @default(0)
+  clickCount Int         @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([type, status])
+  @@map("marketing_campaigns")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  userName     String?
+  userRole     String?
+  module       String
+  action       String
+  resourceId   String?
+  resourceName String?
+  details      Json?
+  ipAddress    String?
+  userAgent    String?  @db.Text
+  createdAt    DateTime @default(now())
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([module, createdAt])
+  @@index([userId, createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model DeliveryAssignment {
+  id               String              @id @default(cuid())
+  orderId          String
+  deliveryPersonId String
+  assignedById     String
+  status           DeliveryStatus      @default(ASSIGNED)
+  assignedAt       DateTime            @default(now())
+  acceptedAt       DateTime?
+  pickedUpAt       DateTime?
+  outForDeliveryAt DateTime?
+  deliveredAt      DateTime?
+  failedAt         DateTime?
+  failureReason    String?
+  failureNotes     String?             @db.Text
+  failureEvidence  String?             @db.Text
+  isCurrent        Boolean             @default(true)
+  reassignedToId   String?
+  notes            String?             @db.Text
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  order            Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveryPerson   User                @relation("AssignedDeliveries", fields: [deliveryPersonId], references: [id])
+  assignedBy       User                @relation("AssignmentsCreated", fields: [assignedById], references: [id])
+  proofs           DeliveryProof[]
+  codCollection    CodCollection?
+  statusLogs       DeliveryStatusLog[]
+
+  @@index([orderId])
+  @@index([deliveryPersonId, status])
+  @@index([isCurrent])
+  @@map("delivery_assignments")
+}
+
+model DeliveryProof {
+  id                 String              @id @default(cuid())
+  assignmentId       String
+  orderId            String
+  deliveryPersonId   String
+  cloudinaryPublicId String              @db.VarChar(500)
+  cloudinaryUrl      String              @db.Text
+  cloudinaryFolder   String?             @db.VarChar(255)
+  verificationStatus String              @default("PENDING") // "PENDING" | "VERIFIED" | "FLAGGED" | "INVESTIGATING"
+  verifiedById       String?
+  verifiedAt         DateTime?
+  verificationNotes  String?             @db.Text
+  recipientName      String?
+  recipientPhone     String?
+  customerOtp        String?
+  notes              String?             @db.Text
+  createdAt          DateTime            @default(now())
+
+  assignment         DeliveryAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  order              Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveryPerson     User                @relation(fields: [deliveryPersonId], references: [id])
+  verifiedBy         User?               @relation("VerifiedProofs", fields: [verifiedById], references: [id])
+
+  @@index([orderId])
+  @@index([deliveryPersonId])
+  @@index([verificationStatus])
+  @@map("delivery_proofs")
+}
+
+model DeliveryStatusLog {
+  id             String              @id @default(cuid())
+  assignmentId   String
+  orderId        String
+  staffId        String
+  previousStatus String?
+  newStatus      String
+  metadata       Json?
+  createdAt      DateTime            @default(now())
+
+  assignment     DeliveryAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  order          Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  staff          User                @relation(fields: [staffId], references: [id])
+
+  @@index([assignmentId])
+  @@index([orderId])
+  @@map("delivery_status_logs")
+}
+
+model CodCollection {
+  id               String              @id @default(cuid())
+  assignmentId     String              @unique
+  orderId          String              @unique
+  deliveryPersonId String
+  expectedAmount   Decimal             @db.Decimal(10, 2)
+  collectedAmount  Decimal             @db.Decimal(10, 2)
+  settlementStatus String              @default("PENDING") // "PENDING" | "SETTLED" | "DISCREPANCY"
+  settlementId     String?
+  discrepancyNote  String?             @db.Text
+  collectedAt      DateTime            @default(now())
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  assignment       DeliveryAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  order            Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveryPerson   User                @relation(fields: [deliveryPersonId], references: [id])
+  settlement       CodSettlement?      @relation(fields: [settlementId], references: [id])
+
+  @@index([deliveryPersonId, settlementStatus])
+  @@map("cod_collections")
+}
+
+model CodSettlement {
+  id                  String          @id @default(cuid())
+  settlementNumber    String          @unique
+  deliveryPersonId    String
+  settledById         String
+  totalOrders         Int
+  totalExpectedAmount Decimal         @db.Decimal(10, 2)
+  totalCollectedAmount Decimal        @db.Decimal(10, 2)
+  totalSettledAmount  Decimal         @db.Decimal(10, 2)
+  discrepancyAmount   Decimal         @default(0.00) @db.Decimal(10, 2)
+  notes               String?         @db.Text
+  settledAt           DateTime        @default(now())
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  deliveryPerson      User            @relation("SettledCollections", fields: [deliveryPersonId], references: [id])
+  settledBy           User            @relation("AdminSettlements", fields: [settledById], references: [id])
+  collections         CodCollection[]
+
+  @@index([deliveryPersonId])
+  @@index([settledById])
+  @@map("cod_settlements")
+}
+

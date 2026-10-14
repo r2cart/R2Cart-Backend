@@ -195,5 +195,31 @@ export const settings={
   const policies=req.body.policies!==undefined?(typeof req.body.policies==='object'&&req.body.policies!==null?req.body.policies:null):(current?.policies||null);
   const data={storeName:text('storeName','Store name'),logo:String(req.body.logo||'').trim()||null,contactNumber:text('contactNumber','Contact number'),email,address:text('address','Store address'),openingTime,closingTime,currency:String(req.body.currency||'INR').trim().toUpperCase(),minimumOrder:money('minimumOrder','Minimum order'),deliveryFee:money('deliveryFee','Delivery fee'),freeDeliveryThreshold:money('freeDeliveryThreshold','Free delivery threshold'),estimatedDelivery:text('estimatedDelivery','Estimated delivery'),notifications:{orders:Boolean(notifications.orders),stock:Boolean(notifications.stock),customers:Boolean(notifications.customers)},policies};
   ok(res,await prisma.storeSetting.upsert({where:{id:1},update:data,create:{id:1,...data}}),'Store settings saved');
+ }),
+ emergencyPause:asyncHandler(async(req,res)=>{
+  const current=await prisma.storeSetting.findUnique({where:{id:1}});
+  if(!current)throw new AppError('Store settings not found',404);
+  const isPaused=Boolean(req.body.isPaused);
+  const reason=String(req.body.reason||'').trim();
+  const message=String(req.body.message||'').trim();
+  const resumesAt=req.body.resumesAt?new Date(req.body.resumesAt).toISOString():null;
+  const holidayDates=Array.isArray(req.body.holidayDates)?req.body.holidayDates.map(String):[];
+  const existingPolicies=(typeof current.policies==='object'&&current.policies!==null)?current.policies:{};
+  const updatedPolicies={
+   ...existingPolicies,
+   emergencyPause:{
+    isPaused,
+    reason:reason||null,
+    message:message||null,
+    resumesAt,
+    holidayDates,
+    updatedAt:new Date().toISOString()
+   }
+  };
+  const updated=await prisma.storeSetting.update({
+   where:{id:1},
+   data:{policies:updatedPolicies}
+  });
+  ok(res,updated,isPaused?'Store orders paused':'Store orders resumed');
  })
 };

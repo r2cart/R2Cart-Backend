@@ -15,3 +15,4 @@ export const bannerImageUpload=memoryUpload();
 export const storeLogoUpload=memoryUpload();
 export const adminAvatarUpload=memoryUpload();
 export const categoryImageUpload=memoryUpload();
+export const deliveryProofUpload=memoryUpload();

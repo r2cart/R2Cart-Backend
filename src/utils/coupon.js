@@ -8,5 +8,20 @@ export function couponData(body){
  if(discount<=0||type==='PERCENTAGE'&&discount>100)throw new AppError('Percentage discounts must be between 0 and 100; fixed discounts must be positive',422);
  if(!Number.isInteger(perUserLimit)||perUserLimit<1||usageLimit!==null&&(!Number.isInteger(usageLimit)||usageLimit<1))throw new AppError('Usage limits must be positive whole numbers',422);
  const startsAt=new Date(body.startsAt),expiresAt=new Date(body.expiresAt);if(Number.isNaN(startsAt.getTime())||Number.isNaN(expiresAt.getTime())||expiresAt<=startsAt)throw new AppError('Expiry must be after the start date',422);
- return {code,type,status,discount,minimumOrder,maximumDiscount,usageLimit,perUserLimit,startsAt,expiresAt};
+ return {
+  code,
+  type,
+  status,
+  discount,
+  minimumOrder,
+  maximumDiscount,
+  usageLimit,
+  perUserLimit,
+  startsAt,
+  expiresAt,
+  isFirstOrderOnly:Boolean(body.isFirstOrderOnly),
+  targetUserIds:Array.isArray(body.targetUserIds)?body.targetUserIds:null,
+  campaignName:body.campaignName?String(body.campaignName).trim():null,
+  description:body.description?String(body.description).trim():null
+ };
 }
