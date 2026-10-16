@@ -104,22 +104,42 @@ export async function runSeed(){
   });
  }
 
- // 3. Admin User (Only creates if NO admin user exists. Preserves admin password and email if changed)
- const existingAdmin=await prisma.user.findFirst({where:{role:'ADMIN'}});
- if(!existingAdmin){
-  await prisma.user.create({
-   data:{
-    name:'Nadeem Ahmad',
-    email:'r2cartsupport@gmail.com',
-    mobile:'9000000001',
-    passwordHash:await bcrypt.hash('Admin@R2Cart',12),
-    role:'ADMIN'
-   }
-  });
-  console.log('Default admin created: r2cartsupport@gmail.com');
- }else{
-  console.log(`Preserving existing admin user: ${existingAdmin.email}`);
- }
+ // 3. Admin & Super Admin Users
+ const adminPasswordHash = await bcrypt.hash('Admin@123', 12);
+ const superPasswordHash = await bcrypt.hash('Super@123', 12);
+
+ await prisma.user.upsert({
+  where:{email:'super@gmail.com'},
+  update:{passwordHash:superPasswordHash,role:'SUPER_ADMIN',staffRole:'SUPER_ADMIN'},
+  create:{
+   name:'Platform Super Admin',
+   email:'super@gmail.com',
+   mobile:'9876543211',
+   passwordHash:superPasswordHash,
+   role:'SUPER_ADMIN',
+   staffRole:'SUPER_ADMIN',
+   status:'ACTIVE',
+   isStaffActive:true,
+   permissions:{all:true}
+  }
+ });
+
+ await prisma.user.upsert({
+  where:{email:'admin@gmail.com'},
+  update:{passwordHash:adminPasswordHash,role:'ADMIN',staffRole:'ADMIN'},
+  create:{
+   name:'Store Admin',
+   email:'admin@gmail.com',
+   mobile:'9876543210',
+   passwordHash:adminPasswordHash,
+   role:'ADMIN',
+   staffRole:'ADMIN',
+   status:'ACTIVE',
+   isStaffActive:true,
+   permissions:{all:true}
+  }
+ });
+ console.log('Admin accounts initialized: super@gmail.com & admin@gmail.com');
 
  // 4. Coupons (Safe upsert with empty update)
  for(const c of [{code:'FRESH50',type:'FIXED',discount:50,minimumOrder:499,maximumDiscount:50},{code:'WELCOME20',type:'PERCENTAGE',discount:20,minimumOrder:799,maximumDiscount:150}]){

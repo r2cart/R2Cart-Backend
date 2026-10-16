@@ -23,7 +23,8 @@ export const adminDeliveryAssignments = {
       where.OR = [
         { name: { contains: String(search).trim() } },
         { email: { contains: String(search).trim() } },
-        { mobile: { contains: String(search).trim() } }
+        { mobile: { contains: String(search).trim() } },
+        { deliveryStaffId: { contains: String(search).trim() } }
       ];
     }
 
@@ -34,6 +35,7 @@ export const adminDeliveryAssignments = {
         name: true,
         email: true,
         mobile: true,
+        deliveryStaffId: true,
         role: true,
         staffRole: true,
         dutyStatus: true,
@@ -215,7 +217,7 @@ export const adminDeliveryAssignments = {
             }
           },
           deliveryPerson: {
-            select: { id: true, name: true, mobile: true, email: true, vehicleType: true, vehicleNumber: true }
+            select: { id: true, name: true, mobile: true, email: true, deliveryStaffId: true, vehicleType: true, vehicleNumber: true }
           },
           assignedBy: {
             select: { id: true, name: true, email: true }

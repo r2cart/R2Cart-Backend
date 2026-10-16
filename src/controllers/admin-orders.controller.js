@@ -3,6 +3,7 @@ import {AppError,asyncHandler,ok} from '../utils/response.js';
 import {orderDto} from '../utils/order.js';
 import {notifyCustomerOrderStatusUpdate} from '../services/notification.service.js';
 import {sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
+import {logAudit} from '../services/audit.service.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
@@ -31,6 +32,9 @@ export const orders={
    if(!current)throw new AppError('Order not found',404);
    if(current.status===status)return tx.order.findUnique({where:{id:current.id},include});
    if(['DELIVERED','CANCELLED'].includes(current.status))throw new AppError('Delivered and cancelled orders cannot be changed',409);
+   if(status==='CANCELLED'&&['OUT_FOR_DELIVERY','DELIVERED'].includes(current.status)){
+    throw new AppError('Order cannot be cancelled once it is out for delivery',409);
+   }
    const changed=await tx.order.updateMany({where:{id:current.id,status:current.status},data:{status}});
    if(changed.count!==1)throw new AppError('Order changed in another session. Refresh and retry.',409);
    if(status==='CANCELLED'){
@@ -62,6 +66,18 @@ export const orders={
    return tx.order.findUnique({where:{id:current.id},include});
   });
   ok(res,orderDto(row),'Order status updated');
+  logAudit(req, {
+    module: 'ORDERS',
+    action: status === 'CANCELLED' ? 'ORDER_CANCELLED' : 'ORDER_STATUS_UPDATE',
+    resourceId: row.id,
+    resourceName: `#${row.orderNumber}`,
+    details: {
+      orderNumber: row.orderNumber,
+      status,
+      totalAmount: Number(row.grandTotal),
+      note: req.body.note || null
+    }
+  });
   notifyCustomerOrderStatusUpdate(row,status,req.body.note).catch(e=>console.error('Customer status push error:',e.message));
   sendFcmToCustomerStatusUpdate(row,status,req.body.note).catch(e=>console.error('Customer FCM status push error:',e.message));
  }),
@@ -78,6 +94,9 @@ export const orders={
    if(!current)throw new AppError('Order not found',404);
    if(['DELIVERED','CANCELLED'].includes(current.status)){
     throw new AppError('Cannot modify items of a finalised (delivered or cancelled) order',409);
+   }
+   if(current.status==='OUT_FOR_DELIVERY'){
+    throw new AppError('Cannot modify items of an order that is out for delivery',409);
    }
 
    const item=current.items.find(i=>i.id===itemId);

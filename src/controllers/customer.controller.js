@@ -3,8 +3,9 @@ import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {orderDto,orderNumber,productDto,ticketNumber} from '../utils/order.js';
 import {calculateCart,resolveDeliveryRules} from '../services/pricing.service.js';
 import {sendSupportTicketEmail} from '../services/mail.service.js';
-import {notifyAdminsNewOrder,notifyCustomerOrderPlaced} from '../services/notification.service.js';
-import {sendFcmToAdminsNewOrder,sendFcmToCustomerOrderPlaced} from '../services/fcm.service.js';
+import {notifyAdminsNewOrder,notifyCustomerOrderPlaced,notifyCustomerOrderStatusUpdate} from '../services/notification.service.js';
+import {sendFcmToAdminsNewOrder,sendFcmToCustomerOrderPlaced,sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
+import {logAudit} from '../services/audit.service.js';
 import {getAvailableCustomerSlots} from './admin-scheduling.controller.js';
 const profileDto=user=>({id:user.id,name:user.name,email:user.email,mobile:user.mobile,role:user.role,status:user.status});
 export const profile={get:asyncHandler(async(req,res)=>ok(res,profileDto(req.user))),update:asyncHandler(async(req,res)=>{const name=String(req.body.name||'').trim(),mobile=String(req.body.mobile||'').replace(/\D/g,'');if(name.length<2)throw new AppError('Enter a valid full name',422);if(!/^\d{10}$/.test(mobile))throw new AppError('Enter a valid 10-digit mobile number',422);const existing=await prisma.user.findFirst({where:{mobile,id:{not:req.user.id}}});if(existing)throw new AppError('This mobile number is already linked to another account',409);ok(res,profileDto(await prisma.user.update({where:{id:req.user.id},data:{name,mobile}})),'Profile updated')})};
@@ -70,5 +71,225 @@ export const checkout=asyncHandler(async(req,res)=>{
 
   const addressSnapshot={id:address.id,name:address.name,mobile:address.mobile,house:address.house,street:address.street||'',landmark:address.landmark||'',area:address.area,city:address.city,district:address.district||'',state:address.state||'',pin:address.pin||'',type:address.type||'Home',deliveryZone:{id:rules.villageId||rules.zoneId,name:rules.villageName||rules.zoneName,estimatedDelivery:rules.estimatedDelivery}};
   const result=await prisma.$transaction(async tx=>{const t=await calculateCart(tx,req.user.id,req.body.couponCode,rules);const order=await tx.order.create({data:{orderNumber:orderNumber(),userId:req.user.id,couponId:t.coupon?.id||null,status:'NEW',paymentMethod:'COD',paymentStatus:'PENDING',itemTotal:t.itemTotal,productDiscount:t.productDiscount,couponDiscount:t.couponDiscount,deliveryFee:t.deliveryFee,handlingFee:t.handlingFee,grandTotal:t.grandTotal,addressSnapshot,deliveryInstruction:req.body.deliveryInstruction||null,deliveryType,deliveryDate,deliverySlot,items:{create:t.cart.items.map(i=>({productId:i.productId,name:i.product.name,sku:i.product.sku,unit:i.product.unit,image:i.product.images[0]?.url||null,mrp:i.product.mrp,price:i.product.price,quantity:i.quantity}))},history:{create:{status:'NEW',note:deliveryType==='SCHEDULED'?`Order placed (Scheduled for ${deliveryDate}, ${deliverySlot})`:'Order placed'}},payment:{create:{method:'COD',status:'PENDING',amount:t.grandTotal}}},include:{items:true,history:true}});for(const item of t.cart.items){const current=await tx.product.findUnique({where:{id:item.productId},select:{id:true,name:true,stock:true}});if(!current||current.stock<item.quantity)throw new AppError(`Insufficient stock for ${current?.name||item.product?.name||'item'}. Only ${current?.stock||0} remaining.`,409);await tx.product.update({where:{id:item.productId},data:{stock:Math.max(0,current.stock-item.quantity)}});if(tx.inventoryLog?.create)await tx.inventoryLog.create({data:{productId:item.productId,type:'ORDER_DEDUCT',previousStock:current.stock,newStock:Math.max(0,current.stock-item.quantity),quantityDiff:-item.quantity,reason:`Order placed #${order.orderNumber}`,orderId:order.id}})}if(t.coupon){await tx.coupon.update({where:{id:t.coupon.id},data:{usageCount:{increment:1}}});await tx.couponUsage.create({data:{couponId:t.coupon.id,userId:req.user.id,orderId:order.id}})}await tx.cartItem.deleteMany({where:{cartId:t.cart.id}});return order},{maxWait:15000,timeout:30000});created(res,orderDto(result),'Order placed successfully');notifyAdminsNewOrder(result).catch(e=>console.error('Admin order push error:',e.message));notifyCustomerOrderPlaced(result).catch(e=>console.error('Customer order push error:',e.message));sendFcmToAdminsNewOrder(result).catch(e=>console.error('Admin FCM order push error:',e.message));sendFcmToCustomerOrderPlaced(result).catch(e=>console.error('Customer FCM order push error:',e.message))});
-export const orders={list:asyncHandler(async(req,res)=>{const rows=await prisma.order.findMany({where:{userId:req.user.id},include:{items:true,history:true},orderBy:{createdAt:'desc'}});ok(res,rows.map(orderDto))}),get:asyncHandler(async(req,res)=>{const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}],userId:req.user.id},include:{items:true,history:true,payment:true}});if(!row)throw new AppError('Order not found',404);ok(res,orderDto(row))})};
+export const orders={
+  list:asyncHandler(async(req,res)=>{const rows=await prisma.order.findMany({where:{userId:req.user.id},include:{items:true,history:true},orderBy:{createdAt:'desc'}});ok(res,rows.map(orderDto))}),
+  get:asyncHandler(async(req,res)=>{const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}],userId:req.user.id},include:{items:true,history:true,payment:true}});if(!row)throw new AppError('Order not found',404);ok(res,orderDto(row))}),
+  cancel:asyncHandler(async(req,res)=>{
+    const reason=String(req.body?.reason||'').trim()||'Cancelled by customer';
+    const orderId=req.params.id;
+    const row=await prisma.$transaction(async tx=>{
+      const current=await tx.order.findFirst({
+        where:{OR:[{id:orderId},{orderNumber:orderId}],userId:req.user.id},
+        include:{items:true,history:true,payment:true}
+      });
+      if(!current)throw new AppError('Order not found',404);
+      if(current.status==='CANCELLED')throw new AppError('This order is already cancelled',409);
+      if(['OUT_FOR_DELIVERY','DELIVERED'].includes(current.status)){
+        throw new AppError('Order cannot be cancelled once it is out for delivery',409);
+      }
+      if(!['NEW','CONFIRMED','PACKING'].includes(current.status)){
+        throw new AppError(`Cannot cancel order in status ${current.status}`,409);
+      }
+      const changed=await tx.order.updateMany({
+        where:{id:current.id,status:current.status},
+        data:{status:'CANCELLED'}
+      });
+      if(changed.count!==1)throw new AppError('Order status changed in another session. Refresh and retry.',409);
+      for(const item of current.items){
+        let prevStock=0;
+        if(typeof tx.product.findUnique==='function'){
+          const prod=await tx.product.findUnique({where:{id:item.productId},select:{stock:true}});
+          prevStock=prod?.stock||0;
+        }
+        await tx.product.update({where:{id:item.productId},data:{stock:{increment:item.quantity}}});
+        if(tx.inventoryLog?.create){
+          await tx.inventoryLog.create({
+            data:{
+              productId:item.productId,
+              type:'ORDER_RESTORE',
+              previousStock:prevStock,
+              newStock:prevStock+item.quantity,
+              quantityDiff:item.quantity,
+              reason:`Customer cancellation #${current.orderNumber}: ${reason}`,
+              orderId:current.id,
+              adminId:null,
+              adminName:req.user.name||'Customer'
+            }
+          });
+        }
+      }
+      await tx.orderStatusHistory.create({
+        data:{
+          orderId:current.id,
+          status:'CANCELLED',
+          note:`Cancelled by customer: ${reason}`
+        }
+      });
+      return tx.order.findUnique({
+        where:{id:current.id},
+        include:{items:true,history:true,payment:true}
+      });
+    });
+    ok(res,orderDto(row),'Order cancelled successfully');
+    logAudit(req,{
+      module:'ORDERS',
+      action:'ORDER_CANCELLED_BY_CUSTOMER',
+      resourceId:row.id,
+      resourceName:`#${row.orderNumber}`,
+      details:{orderNumber:row.orderNumber,reason,totalAmount:Number(row.grandTotal)}
+    });
+    notifyCustomerOrderStatusUpdate(row,'CANCELLED',reason).catch(e=>console.error('Customer status push error:',e.message));
+    sendFcmToCustomerStatusUpdate(row,'CANCELLED',reason).catch(e=>console.error('Customer FCM status push error:',e.message));
+  }),
+  updateDetails: asyncHandler(async (req, res) => {
+    const orderId = req.params.id;
+    const {
+      name,
+      mobile,
+      house,
+      street,
+      landmark,
+      area,
+      city,
+      pin,
+      deliveryInstruction,
+      deliveryDate,
+      deliverySlot,
+      updateSavedAddress
+    } = req.body;
+
+    const trimmedName = String(name || '').trim();
+    const cleanMobile = String(mobile || '').replace(/\D/g, '');
+    const trimmedHouse = String(house || '').trim();
+    const trimmedArea = String(area || '').trim();
+    const trimmedCity = String(city || 'Hathua').trim();
+
+    if (trimmedName.length < 2) {
+      throw new AppError('Enter a valid recipient name (at least 2 characters)', 422);
+    }
+    if (!/^\d{10}$/.test(cleanMobile)) {
+      throw new AppError('Enter a valid 10-digit mobile number', 422);
+    }
+    if (!trimmedHouse) {
+      throw new AppError('House, flat, or building information is required', 422);
+    }
+    if (!trimmedArea) {
+      throw new AppError('Area or village locality is required', 422);
+    }
+
+    const row = await prisma.$transaction(async tx => {
+      const current = await tx.order.findFirst({
+        where: {
+          OR: [{ id: orderId }, { orderNumber: orderId }],
+          userId: req.user.id
+        },
+        include: { items: true, history: true, payment: true }
+      });
+
+      if (!current) throw new AppError('Order not found', 404);
+
+      if (['OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'].includes(current.status)) {
+        throw new AppError('Order cannot be modified once it is out for delivery, delivered, or cancelled', 409);
+      }
+      if (!['NEW', 'CONFIRMED', 'PACKING'].includes(current.status)) {
+        throw new AppError(`Cannot modify order in status ${current.status}`, 409);
+      }
+
+      let rules = null;
+      try {
+        rules = await resolveDeliveryRules(prisma, trimmedArea);
+      } catch {}
+
+      let snap = current.addressSnapshot;
+      if (typeof snap === 'string') {
+        try { snap = JSON.parse(snap); } catch { snap = {}; }
+      }
+      snap = snap || {};
+
+      const newSnapshot = {
+        ...snap,
+        name: trimmedName,
+        mobile: cleanMobile,
+        house: trimmedHouse,
+        street: String(street || '').trim(),
+        landmark: String(landmark || '').trim(),
+        area: trimmedArea,
+        city: trimmedCity,
+        pin: String(pin || '').trim(),
+        deliveryZone: rules ? {
+          id: rules.villageId || rules.zoneId,
+          name: rules.villageName || rules.zoneName,
+          estimatedDelivery: rules.estimatedDelivery
+        } : (snap.deliveryZone || null)
+      };
+
+      let newDate = current.deliveryDate;
+      let newSlot = current.deliverySlot;
+      if (current.deliveryType === 'SCHEDULED' && deliveryDate) {
+        newDate = String(deliveryDate).trim();
+        if (deliverySlot) newSlot = String(deliverySlot).trim();
+      }
+
+      const changed = await tx.order.updateMany({
+        where: { id: current.id, status: current.status },
+        data: {
+          addressSnapshot: newSnapshot,
+          deliveryInstruction: typeof deliveryInstruction === 'string' ? deliveryInstruction.trim() : current.deliveryInstruction,
+          ...(current.deliveryType === 'SCHEDULED' && {
+            deliveryDate: newDate,
+            deliverySlot: newSlot
+          })
+        }
+      });
+
+      if (changed.count !== 1) {
+        throw new AppError('Order status changed in another session. Refresh and retry.', 409);
+      }
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: current.id,
+          status: current.status,
+          note: `Delivery details updated by customer (Name: ${newSnapshot.name}, Mobile: +91 ${newSnapshot.mobile}, Address: ${newSnapshot.house}, ${newSnapshot.area})`
+        }
+      });
+
+      if (updateSavedAddress && snap.id) {
+        await tx.address.updateMany({
+          where: { id: snap.id, userId: req.user.id },
+          data: {
+            name: newSnapshot.name,
+            mobile: newSnapshot.mobile,
+            house: newSnapshot.house,
+            street: newSnapshot.street,
+            landmark: newSnapshot.landmark,
+            area: newSnapshot.area,
+            city: newSnapshot.city,
+            pin: newSnapshot.pin
+          }
+        }).catch(() => {});
+      }
+
+      return tx.order.findUnique({
+        where: { id: current.id },
+        include: { items: true, history: true, payment: true }
+      });
+    });
+
+    ok(res, orderDto(row), 'Order delivery details updated successfully');
+
+    logAudit(req, {
+      module: 'ORDERS',
+      action: 'ORDER_DETAILS_UPDATED_BY_CUSTOMER',
+      resourceId: row.id,
+      resourceName: `#${row.orderNumber}`,
+      details: {
+        orderNumber: row.orderNumber,
+        updatedRecipient: row.customer,
+        updatedMobile: row.mobile,
+        area: trimmedArea
+      }
+    });
+  })
+};
 export const support={list:asyncHandler(async(req,res)=>ok(res,await prisma.supportTicket.findMany({where:{userId:req.user.id},include:{messages:{orderBy:{createdAt:'asc'}}},orderBy:{createdAt:'desc'}}))),create:asyncHandler(async(req,res)=>{if(req.body.orderId){const order=await prisma.order.findFirst({where:{id:req.body.orderId,userId:req.user.id},select:{id:true}});if(!order)throw new AppError('Related order not found',404)}const ticket=await prisma.supportTicket.create({data:{ticketNumber:ticketNumber(),userId:req.user.id,orderId:req.body.orderId||null,issueType:req.body.issueType,subject:req.body.subject,description:req.body.description}});let emailNotificationSent=false;try{emailNotificationSent=await sendSupportTicketEmail({...ticket,customer:req.user})}catch(error){console.error(`Support notification failed for ${ticket.ticketNumber}:`,error.message)}created(res,{...ticket,emailNotificationSent},'Ticket submitted')})};

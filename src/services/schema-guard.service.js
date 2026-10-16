@@ -43,15 +43,207 @@ export async function ensureStoreSettingColumns() {
   }
 }
 
-export function autoSyncPrismaSchema() {
+export async function generateNextDeliveryStaffId() {
+  const staffWithIds = await prisma.user.findMany({
+    where: {
+      deliveryStaffId: {
+        startsWith: 'R2D-'
+      }
+    },
+    select: {
+      deliveryStaffId: true
+    }
+  });
+
+  let maxNum = 1000;
+  for (const staff of staffWithIds) {
+    if (staff.deliveryStaffId) {
+      const num = parseInt(staff.deliveryStaffId.replace(/^R2D-/i, ''), 10);
+      if (!isNaN(num) && num > maxNum) {
+        maxNum = num;
+      }
+    }
+  }
+
+  return `R2D-${maxNum + 1}`;
+}
+
+export async function ensureDeliveryStaffColumns() {
   try {
-    console.log('[Schema] Running prisma db push to ensure all enterprise & delivery tables exist...');
-    execSync('npx prisma db push --skip-generate --accept-data-loss', {
-      stdio: 'inherit',
-      timeout: 120000
+    const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+    
+    if (isPostgres) {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "deliveryStaffId" VARCHAR(50);
+      `).catch(() => {});
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS "users_deliverystaffid_key" ON "users"("deliveryStaffId");
+      `).catch(() => {});
+    } else {
+      const existing = await prisma.$queryRawUnsafe(`
+        SELECT COUNT(*) as cnt 
+        FROM information_schema.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'users' 
+          AND COLUMN_NAME = 'deliveryStaffId'
+      `);
+      const count = Number(existing[0]?.cnt || 0);
+      if (count === 0) {
+        console.log('[Schema] Adding missing column: users.deliveryStaffId');
+        await prisma.$executeRawUnsafe(`ALTER TABLE \`users\` ADD COLUMN \`deliveryStaffId\` VARCHAR(50) NULL UNIQUE`);
+      }
+    }
+
+    // Auto-assign Delivery Staff IDs to existing delivery persons who don't have one
+    const deliveryPersonsWithoutId = await prisma.user.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { role: 'DELIVERY_PERSON' },
+              { staffRole: 'DELIVERY_PERSON' }
+            ]
+          },
+          { deliveryStaffId: null }
+        ]
+      },
+      orderBy: { createdAt: 'asc' }
     });
-    console.log('[Schema] Prisma db push completed successfully.');
+
+    if (deliveryPersonsWithoutId.length > 0) {
+      console.log(`[Schema] Found ${deliveryPersonsWithoutId.length} delivery staff without Delivery Staff ID. Assigning IDs...`);
+      for (const staff of deliveryPersonsWithoutId) {
+        const nextId = await generateNextDeliveryStaffId();
+        await prisma.user.update({
+          where: { id: staff.id },
+          data: { deliveryStaffId: nextId }
+        });
+        console.log(`[Schema] Assigned Delivery Staff ID ${nextId} to ${staff.name || staff.email} (${staff.id})`);
+      }
+    }
   } catch (err) {
-    console.warn('[Schema] Prisma db push notice:', err.message);
+    console.warn('[Schema] DeliveryStaffId column verify notice:', err.message);
   }
 }
+
+export async function ensureHomepageRankingTables() {
+  try {
+    console.log('[Schema] Checking homepage ranking tables...');
+    const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+
+    if (isPostgres) {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "homepage_ranking_configs" (
+          "id" VARCHAR(50) PRIMARY KEY,
+          "bestSellers" JSONB NOT NULL,
+          "topPicks" JSONB NOT NULL,
+          "version" INTEGER NOT NULL DEFAULT 1,
+          "publishedAt" TIMESTAMP,
+          "publishedBy" VARCHAR(191),
+          "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+      `).catch(() => {});
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "homepage_ranking_history" (
+          "id" VARCHAR(191) PRIMARY KEY,
+          "version" INTEGER NOT NULL,
+          "bestSellers" JSONB NOT NULL,
+          "topPicks" JSONB NOT NULL,
+          "publishedBy" VARCHAR(191),
+          "note" TEXT,
+          "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+      `).catch(() => {});
+    } else {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS \`homepage_ranking_configs\` (
+          \`id\` VARCHAR(50) NOT NULL,
+          \`bestSellers\` JSON NOT NULL,
+          \`topPicks\` JSON NOT NULL,
+          \`version\` INT NOT NULL DEFAULT 1,
+          \`publishedAt\` DATETIME(3) NULL,
+          \`publishedBy\` VARCHAR(191) NULL,
+          \`createdAt\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          \`updatedAt\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS \`homepage_ranking_history\` (
+          \`id\` VARCHAR(191) NOT NULL,
+          \`version\` INT NOT NULL,
+          \`bestSellers\` JSON NOT NULL,
+          \`topPicks\` JSON NOT NULL,
+          \`publishedBy\` VARCHAR(191) NULL,
+          \`note\` TEXT NULL,
+          \`createdAt\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`),
+          INDEX \`homepage_ranking_history_version_idx\` (\`version\`),
+          INDEX \`homepage_ranking_history_createdAt_idx\` (\`createdAt\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+    }
+
+    // Ensure baseline 'active' and 'draft' configs exist
+    const { DEFAULT_BEST_SELLERS_CONFIG, DEFAULT_TOP_PICKS_CONFIG } = await import('../config/ranking-defaults.js');
+    
+    // Find sample in-stock products for default fallback/curation if none specified
+    const sampleProducts = await prisma.product.findMany({
+      where: { status: 'ACTIVE', stock: { gt: 0 } },
+      take: 10,
+      select: { id: true }
+    });
+    const fallbackIds = sampleProducts.map(p => p.id);
+
+    const activeRows = await prisma.$queryRawUnsafe(`
+      SELECT id FROM \`homepage_ranking_configs\` WHERE id = 'active' LIMIT 1
+    `);
+
+    if (!Array.isArray(activeRows) || activeRows.length === 0) {
+      console.log('[Schema] Seeding baseline active homepage ranking config...');
+      const bs = { ...DEFAULT_BEST_SELLERS_CONFIG, fallbackProductIds: fallbackIds };
+      const tp = { ...DEFAULT_TOP_PICKS_CONFIG, curatedProductIds: fallbackIds.slice(0, 8) };
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO \`homepage_ranking_configs\` (\`id\`, \`bestSellers\`, \`topPicks\`, \`version\`, \`publishedAt\`, \`publishedBy\`, \`createdAt\`, \`updatedAt\`)
+        VALUES ('active', ?, ?, 1, NOW(), 'system', NOW(), NOW())
+      `, JSON.stringify(bs), JSON.stringify(tp));
+    }
+
+    const draftRows = await prisma.$queryRawUnsafe(`
+      SELECT id FROM \`homepage_ranking_configs\` WHERE id = 'draft' LIMIT 1
+    `);
+
+    if (!Array.isArray(draftRows) || draftRows.length === 0) {
+      console.log('[Schema] Seeding baseline draft homepage ranking config...');
+      const bs = { ...DEFAULT_BEST_SELLERS_CONFIG, fallbackProductIds: fallbackIds };
+      const tp = { ...DEFAULT_TOP_PICKS_CONFIG, curatedProductIds: fallbackIds.slice(0, 8) };
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO \`homepage_ranking_configs\` (\`id\`, \`bestSellers\`, \`topPicks\`, \`version\`, \`publishedAt\`, \`publishedBy\`, \`createdAt\`, \`updatedAt\`)
+        VALUES ('draft', ?, ?, 1, NULL, NULL, NOW(), NOW())
+      `, JSON.stringify(bs), JSON.stringify(tp));
+    }
+
+    console.log('[Schema] Homepage ranking tables and baseline configs verified.');
+  } catch (err) {
+    console.warn('[Schema] Homepage ranking tables verify notice:', err.message);
+  }
+}
+
+export function autoSyncPrismaSchema() {
+  if (process.env.AUTO_SYNC_PRISMA === 'true') {
+    try {
+      console.log('[Schema] Running prisma db push to ensure all enterprise & delivery tables exist...');
+      execSync('npx prisma db push --skip-generate', {
+        stdio: 'inherit',
+        timeout: 120000
+      });
+      console.log('[Schema] Prisma db push completed successfully.');
+    } catch (err) {
+      console.warn('[Schema] Prisma db push notice:', err.message);
+    }
+  }
+}
+

@@ -1,8 +1,13 @@
 import {Router} from 'express';
 import * as c from '../controllers/catalog.controller.js';
 import * as m from '../controllers/admin-marketing.controller.js';
+import {homepageRankingController} from '../controllers/homepage-ranking.controller.js';
 
 export const catalogRouter = Router();
+
+// Public Homepage Ranking Endpoints
+catalogRouter.get('/homepage/best-sellers', homepageRankingController.getBestSellers);
+catalogRouter.get('/homepage/top-picks', homepageRankingController.getTopPicks);
 
 catalogRouter.get('/categories', c.categories);
 catalogRouter.get('/products', c.products);

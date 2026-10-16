@@ -710,6 +710,7 @@ export const deliveryPortal = {
         mobile: true,
         role: true,
         staffRole: true,
+        deliveryStaffId: true,
         dutyStatus: true,
         assignedVillageIds: true,
         vehicleType: true,

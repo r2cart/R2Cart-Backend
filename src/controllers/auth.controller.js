@@ -12,7 +12,8 @@ const publicUser=u=>({
   mobile:u.mobile,
   role:u.role,
   status:u.status,
-  staffRole:u.staffRole||(u.role==='SUPER_ADMIN'?'SUPER_ADMIN':u.role==='ADMIN'?'SUPER_ADMIN':u.role==='DELIVERY_PERSON'?'DELIVERY_PERSON':u.role==='MANAGER'?'ADMIN':'CUSTOMER'),
+  deliveryStaffId:u.deliveryStaffId||null,
+  staffRole:u.staffRole||(u.role==='SUPER_ADMIN'?'SUPER_ADMIN':u.role==='ADMIN'?'ADMIN':u.role==='DELIVERY_PERSON'?'DELIVERY_PERSON':u.role==='MANAGER'?'MANAGER':'CUSTOMER'),
   permissions:u.permissions||{},
   isStaffActive:u.isStaffActive!==false,
   dutyStatus:u.dutyStatus||'OFF_DUTY',
@@ -21,11 +22,16 @@ const publicUser=u=>({
   vehicleNumber:u.vehicleNumber||null,
   lastLoginAt:u.lastLoginAt
 });
-async function issue(res,user,{cookieName='grocify_refresh',cookiePath='/'}={}){
+async function issue(res,user,{cookieName,cookiePath='/'}={}){
  const access=accessToken(user),refresh=refreshToken(user);
  await prisma.refreshToken.create({data:{userId:user.id,tokenHash:hashToken(refresh),expiresAt:refreshExpiry()}});
  const isProd=env.nodeEnv==='production';
- res.cookie(cookieName,refresh,{
+ const targetCookie = cookieName || (
+   user.role === 'CUSTOMER' ? 'grocify_refresh' :
+   user.role === 'DELIVERY_PERSON' ? 'grocify_delivery_refresh' :
+   'grocify_admin_refresh'
+ );
+ res.cookie(targetCookie,refresh,{
   httpOnly:true,
   secure:isProd||env.cookieSecure,
   sameSite:isProd?'none':'lax',
@@ -38,25 +44,104 @@ async function issue(res,user,{cookieName='grocify_refresh',cookiePath='/'}={}){
   user:publicUser(user)
  };
 }
-export const customerLogin=asyncHandler(async(req,res)=>{const user=await prisma.user.findUnique({where:{email:req.body.email}});if(user&&!user.passwordHash)throw new AppError('Password is not set for this account. Use Create account once to set it securely.',409);if(!user||!await bcrypt.compare(req.body.password,user.passwordHash))throw new AppError('Invalid email or password',401);if(user.status!=='ACTIVE')throw new AppError('Your account is currently unavailable',403);ok(res,await issue(res,user),'Login successful')});
+
+export const customerLogin=asyncHandler(async(req,res)=>{
+  const rawIdentifier = String(req.body.identifier || req.body.email || req.body.mobile || req.body.deliveryStaffId || '').trim();
+  const password = String(req.body.password || '');
+  if (!rawIdentifier || !password) {
+    throw new AppError('Identifier and password are required', 400);
+  }
+
+  const normalizedEmail = rawIdentifier.toLowerCase();
+  const normalizedStaffId = rawIdentifier.toUpperCase();
+  const digitsOnly = rawIdentifier.replace(/\D/g, '');
+
+  const orConditions = [
+    { email: normalizedEmail },
+    { deliveryStaffId: normalizedStaffId }
+  ];
+  if (digitsOnly.length >= 7) {
+    orConditions.push({ mobile: digitsOnly });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: orConditions
+    }
+  });
+
+  if (!user || !user.passwordHash || !await bcrypt.compare(password, user.passwordHash)) {
+    throw new AppError('Invalid email, staff ID, or password', 401);
+  }
+
+  if (user.role !== 'CUSTOMER') {
+    if (user.isStaffActive === false || user.status !== 'ACTIVE') {
+      throw new AppError('Your account is currently deactivated. Please contact administrator.', 403);
+    }
+  } else {
+    if (user.status !== 'ACTIVE') {
+      throw new AppError('Your account is currently unavailable', 403);
+    }
+  }
+
+  const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      lastLoginAt: new Date(),
+      lastLoginIp: String(ip || '').slice(0, 45)
+    }
+  }).catch(() => {});
+
+  logAudit(req, {
+    module: 'AUTH',
+    action: 'LOGIN_SUCCESS',
+    resourceId: user.id,
+    resourceName: user.name,
+    details: { identifier: rawIdentifier, role: user.staffRole || user.role }
+  });
+
+  ok(res, await issue(res, user), 'Login successful');
+});
 export const requestOtp=asyncHandler(async(req,res)=>{const {email,name,mobile,password}=req.body;const emailUser=await prisma.user.findUnique({where:{email}});if(emailUser?.passwordHash)throw new AppError('An account already exists with this email. Please sign in.',409);const previous=!password?await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'signup',consumedAt:null,expiresAt:{gt:new Date()}},orderBy:{createdAt:'desc'}}):null;if(!password&&!previous)throw new AppError('Signup session expired. Please enter your details again.',400);const mobileUser=password?await prisma.user.findUnique({where:{mobile}}):null;if(mobileUser&&mobileUser.id!==emailUser?.id)throw new AppError('An account already exists with this mobile number.',409);const otp=String(Math.floor(100000+Math.random()*900000));const row=await prisma.otpVerification.create({data:{identifier:email,purpose:'signup',codeHash:await bcrypt.hash(otp,10),pendingName:name||previous.pendingName,pendingMobile:mobile||previous.pendingMobile,pendingPasswordHash:password?await bcrypt.hash(password,12):previous.pendingPasswordHash,expiresAt:new Date(Date.now()+env.otpMinutes*60000)}});try{await sendOtpEmail(email,otp)}catch(error){await prisma.otpVerification.delete({where:{id:row.id}});throw error}ok(res,{expiresInSeconds:env.otpMinutes*60},'OTP sent to your email')});
 export const verifyOtp=asyncHandler(async(req,res)=>{const {email}=req.body;const row=await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'signup',consumedAt:null},orderBy:{createdAt:'desc'}});if(!row||row.expiresAt<new Date()||row.attempts>=5)throw new AppError('Invalid or expired OTP',401);if(!await bcrypt.compare(req.body.otp,row.codeHash)){await prisma.otpVerification.update({where:{id:row.id},data:{attempts:{increment:1}}});throw new AppError('Invalid or expired OTP',401)}const existing=await prisma.user.findUnique({where:{email}});if(existing?.passwordHash)throw new AppError('An account already exists with this email. Please sign in.',409);const user=await prisma.$transaction(async tx=>{await tx.otpVerification.update({where:{id:row.id},data:{consumedAt:new Date()}});return existing?tx.user.update({where:{id:existing.id},data:{name:row.pendingName,mobile:row.pendingMobile,passwordHash:row.pendingPasswordHash}}):tx.user.create({data:{email,name:row.pendingName,mobile:row.pendingMobile,passwordHash:row.pendingPasswordHash}})});ok(res,await issue(res,user),'Account created successfully')});
 export const requestPasswordReset=asyncHandler(async(req,res)=>{const {email}=req.body;const user=await prisma.user.findUnique({where:{email}});if(user?.role==='CUSTOMER'&&user.status==='ACTIVE'&&user.passwordHash){const otp=String(Math.floor(100000+Math.random()*900000));const row=await prisma.otpVerification.create({data:{identifier:email,purpose:'password_reset',codeHash:await bcrypt.hash(otp,10),expiresAt:new Date(Date.now()+env.otpMinutes*60000)}});try{await sendOtpEmail(email,otp,'password_reset')}catch(error){await prisma.otpVerification.delete({where:{id:row.id}});throw error}}ok(res,{expiresInSeconds:env.otpMinutes*60},'If an account exists for this email, a reset code has been sent.')});
 export const resetPassword=asyncHandler(async(req,res)=>{const {email,otp,password}=req.body;const row=await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'password_reset',consumedAt:null},orderBy:{createdAt:'desc'}});const user=await prisma.user.findUnique({where:{email}});if(!row||!user||user.role!=='CUSTOMER'||row.expiresAt<new Date()||row.attempts>=5)throw new AppError('Invalid or expired reset code',401);if(!await bcrypt.compare(otp,row.codeHash)){await prisma.otpVerification.update({where:{id:row.id},data:{attempts:{increment:1}}});throw new AppError('Invalid or expired reset code',401)}const passwordHash=await bcrypt.hash(password,12);await prisma.$transaction(async tx=>{await tx.otpVerification.update({where:{id:row.id},data:{consumedAt:new Date()}});await tx.user.update({where:{id:user.id},data:{passwordHash}});await tx.refreshToken.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:new Date()}})});res.clearCookie('grocify_refresh',{path:'/api/v1/auth'});ok(res,null,'Password reset successfully')});
 export const adminLogin=asyncHandler(async(req,res)=>{
-  const email=String(req.body.email||'').trim().toLowerCase();
+  const rawIdentifier=String(req.body.identifier||req.body.email||req.body.mobile||req.body.deliveryStaffId||'').trim();
   const password=String(req.body.password||'');
   const ip=req.ip||req.headers['x-forwarded-for']||req.socket.remoteAddress;
 
-  const user=await prisma.user.findUnique({where:{email}});
+  if(!rawIdentifier||!password){
+    throw new AppError('Identifier and password are required',400);
+  }
+
+  const normalizedEmail=rawIdentifier.toLowerCase();
+  const normalizedStaffId=rawIdentifier.toUpperCase();
+  const digitsOnly=rawIdentifier.replace(/\D/g,'');
+
+  const orConditions=[
+    {email:normalizedEmail},
+    {deliveryStaffId:normalizedStaffId}
+  ];
+  if(digitsOnly.length>=7){
+    orConditions.push({mobile:digitsOnly});
+  }
+
+  const user=await prisma.user.findFirst({
+    where:{
+      OR:orConditions
+    }
+  });
+
   if(!user||!['ADMIN','MANAGER','SUPER_ADMIN','DELIVERY_PERSON'].includes(user.role)||!user.passwordHash||!await bcrypt.compare(password,user.passwordHash)){
     logAudit(req,{
       module:'AUTH',
       action:'LOGIN_FAILED',
-      resourceName:email,
-      details:{attemptedEmail:email,reason:'Invalid credentials'}
+      resourceName:rawIdentifier,
+      details:{attemptedEmail:rawIdentifier,reason:'Invalid credentials'}
     });
-    throw new AppError('Invalid admin credentials',401);
+    throw new AppError('Invalid credentials',401);
   }
 
   if(user.isStaffActive===false||user.status!=='ACTIVE'){
@@ -87,20 +172,34 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     details:{email:user.email,role:user.staffRole||user.role}
   });
 
-  ok(res,await issue(res,user,{cookieName:'grocify_admin_refresh',cookiePath:'/'}),'Admin login successful');
+  const cookieName=user.role==='DELIVERY_PERSON'?'grocify_delivery_refresh':'grocify_admin_refresh';
+  ok(res,await issue(res,user,{cookieName,cookiePath:'/'}),'Login successful');
 });
 
 export const deliveryLogin=asyncHandler(async(req,res)=>{
-  const identifier=String(req.body.email||req.body.mobile||'').trim().toLowerCase();
+  const rawIdentifier=String(req.body.identifier||req.body.email||req.body.mobile||req.body.deliveryStaffId||'').trim();
   const password=String(req.body.password||'');
   const ip=req.ip||req.headers['x-forwarded-for']||req.socket.remoteAddress;
 
+  if(!rawIdentifier||!password){
+    throw new AppError('Identifier and password are required',400);
+  }
+
+  const normalizedEmail=rawIdentifier.toLowerCase();
+  const normalizedStaffId=rawIdentifier.toUpperCase();
+  const digitsOnly=rawIdentifier.replace(/\D/g,'');
+
+  const orConditions=[
+    {deliveryStaffId:normalizedStaffId},
+    {email:normalizedEmail}
+  ];
+  if(digitsOnly.length>=7){
+    orConditions.push({mobile:digitsOnly});
+  }
+
   const user=await prisma.user.findFirst({
     where:{
-      OR:[
-        {email:identifier},
-        {mobile:identifier.replace(/\D/g,'')}
-      ]
+      OR:orConditions
     }
   });
 
@@ -108,10 +207,10 @@ export const deliveryLogin=asyncHandler(async(req,res)=>{
     logAudit(req,{
       module:'AUTH',
       action:'LOGIN_FAILED',
-      resourceName:identifier,
-      details:{attempted:identifier,reason:'Invalid delivery credentials'}
+      resourceName:rawIdentifier,
+      details:{attempted:rawIdentifier,reason:'Invalid delivery credentials'}
     });
-    throw new AppError('Invalid email/mobile or password',401);
+    throw new AppError('Invalid Delivery Staff ID, email, or password',401);
   }
 
   if(user.isStaffActive===false||user.status!=='ACTIVE'){

@@ -1,12 +1,12 @@
 import {z} from 'zod';
 const envelope=(body=z.any(),params=z.any(),query=z.any())=>z.object({body,params,query});
 const password=z.string().min(8,'Password must contain at least 8 characters').max(72);
-export const customerLoginSchema=envelope(z.object({email:z.string().trim().email().toLowerCase(),password}));
+export const customerLoginSchema=envelope(z.object({email:z.string().trim().optional(),identifier:z.string().trim().optional(),password:z.string().min(1,'Password is required')}).refine(d=>Boolean(d.email||d.identifier),{message:'Email, mobile or Delivery Staff ID is required',path:['email']}));
 export const otpRequestSchema=envelope(z.union([z.object({email:z.string().trim().email().toLowerCase(),mode:z.literal('signup'),name:z.string().trim().min(2).max(80),mobile:z.string().regex(/^\d{10}$/),password}),z.object({email:z.string().trim().email().toLowerCase(),mode:z.literal('signup')})]));
 export const otpVerifySchema=envelope(z.object({email:z.string().trim().email().toLowerCase(),mode:z.literal('signup'),otp:z.string().regex(/^\d{6}$/)}));
 export const passwordResetRequestSchema=envelope(z.object({email:z.string().trim().email().toLowerCase()}));
 export const passwordResetConfirmSchema=envelope(z.object({email:z.string().trim().email().toLowerCase(),otp:z.string().regex(/^\d{6}$/),password}));
-export const adminLoginSchema=envelope(z.object({email:z.string().trim().email().toLowerCase(),password:z.string().min(6)}));
+export const adminLoginSchema=envelope(z.object({email:z.string().trim().optional(),identifier:z.string().trim().optional(),password:z.string().min(1,'Password is required')}).refine(d=>Boolean(d.email||d.identifier),{message:'Identifier is required',path:['email']}));
 export const addressSchema=envelope(z.object({name:z.string().min(2),mobile:z.string().regex(/^\d{10}$/),house:z.string().optional().default(''),street:z.string().optional().default(''),landmark:z.string().optional().default(''),area:z.string().trim().min(2).max(100),city:z.literal('Hathua'),district:z.string().optional().default(''),state:z.string().optional().default(''),pin:z.union([z.literal(''),z.string().regex(/^\d{6}$/)]).optional().default(''),type:z.string().trim().min(2).max(30).default('Home'),isDefault:z.boolean().optional().default(false)}));
 export const cartSchema=envelope(z.object({productId:z.string(),quantity:z.number().int().min(0).max(99)}));
 export const searchHistorySchema=envelope(z.object({query:z.string().trim().min(2).max(100)}));

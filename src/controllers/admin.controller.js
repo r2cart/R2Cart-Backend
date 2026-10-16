@@ -10,6 +10,7 @@ import {productDto} from '../utils/order.js';
 import {deleteProduct,deleteAllProducts} from '../services/product-deletion.service.js';
 import {couponData} from '../utils/coupon.js';
 import {uploadProductImage as uploadProductMedia,uploadMedia,isCloudinaryConfigured} from '../services/image.service.js';
+import {logAudit} from '../services/audit.service.js';
 
 const saveLocalFallback=(buffer,folder)=>{
  const dir=resolve(env.uploadDir,folder);
@@ -82,6 +83,13 @@ export const products={
    return base;
   });
   created(res,productDto(saved),'Product and all pack sizes saved');
+  logAudit(req, {
+    module: 'PRODUCTS',
+    action: 'PRODUCT_CREATE',
+    resourceId: saved.id,
+    resourceName: saved.name,
+    details: { name: saved.name, sku: saved.sku, price: Number(saved.price), stock: saved.stock }
+  });
  }),
  update:asyncHandler(async(req,res)=>{
   const existing=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true,deletedAt:true}});
@@ -93,7 +101,15 @@ export const products={
   if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
   // SKU identifies inventory permanently and is never regenerated on edit.
   const imageUrl=String(image||'').trim();
-  ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{...data,categoryId:cat.id,...(imageUrl&&{images:{deleteMany:{},create:{url:imageUrl}}})},include:productInclude})),'Product updated');
+  const updated=await prisma.product.update({where:{id:req.params.id},data:{...data,categoryId:cat.id,...(imageUrl&&{images:{deleteMany:{},create:{url:imageUrl}}})},include:productInclude});
+  logAudit(req,{
+    module:'PRODUCTS',
+    action:'PRODUCT_UPDATE',
+    resourceId:updated.id,
+    resourceName:updated.name,
+    details:{name:updated.name,price:Number(updated.price),stock:updated.stock}
+  });
+  ok(res,productDto(updated),'Product updated');
  }),
  status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').trim().toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const product=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true}});if(!product)throw new AppError('Product not found',404);ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude})),status==='ACTIVE'?'Product activated':'Product deactivated')}),
  remove:asyncHandler(async(req,res)=>{await deleteProduct(req.params.id);ok(res,null,'Product deleted; unused Cloudinary images removed')}),
@@ -103,6 +119,7 @@ export const products={
   const stock=Number(req.body.stock),lowStockThreshold=req.body.lowStockThreshold===undefined?current.lowStockThreshold:Number(req.body.lowStockThreshold);
   if(req.body.stock===''||!Number.isInteger(stock)||stock<0||stock>2147483647||!Number.isInteger(lowStockThreshold)||lowStockThreshold<0||lowStockThreshold>2147483647)throw new AppError('Stock and threshold must be valid whole numbers',422);
   const product=await prisma.product.update({where:{id:req.params.id},data:{stock,lowStockThreshold},include:productInclude});
+  logAudit(req,{module:'INVENTORY',action:'STOCK_UPDATE',resourceId:product.id,resourceName:product.name,details:{previousStock:current.stock,newStock:stock,lowStockThreshold}});
   ok(res,{...productDto(product),stockStatus:stock===0?'OUT_OF_STOCK':stock<=lowStockThreshold?'LOW_STOCK':'IN_STOCK'},'Stock updated');
  })
 };
@@ -194,7 +211,9 @@ export const settings={
   if(req.body.estimatedDelivery===undefined)req.body.estimatedDelivery=current?.estimatedDelivery;
   const policies=req.body.policies!==undefined?(typeof req.body.policies==='object'&&req.body.policies!==null?req.body.policies:null):(current?.policies||null);
   const data={storeName:text('storeName','Store name'),logo:String(req.body.logo||'').trim()||null,contactNumber:text('contactNumber','Contact number'),email,address:text('address','Store address'),openingTime,closingTime,currency:String(req.body.currency||'INR').trim().toUpperCase(),minimumOrder:money('minimumOrder','Minimum order'),deliveryFee:money('deliveryFee','Delivery fee'),freeDeliveryThreshold:money('freeDeliveryThreshold','Free delivery threshold'),estimatedDelivery:text('estimatedDelivery','Estimated delivery'),notifications:{orders:Boolean(notifications.orders),stock:Boolean(notifications.stock),customers:Boolean(notifications.customers)},policies};
-  ok(res,await prisma.storeSetting.upsert({where:{id:1},update:data,create:{id:1,...data}}),'Store settings saved');
+  const savedSetting = await prisma.storeSetting.upsert({where:{id:1},update:data,create:{id:1,...data}});
+  logAudit(req,{module:'SETTINGS',action:'STORE_SETTINGS_UPDATE',resourceId:'1',resourceName:'Store Settings',details:{storeName:data.storeName,openingTime:data.openingTime,closingTime:data.closingTime,minimumOrder:data.minimumOrder,deliveryFee:data.deliveryFee}});
+  ok(res,savedSetting,'Store settings saved');
  }),
  emergencyPause:asyncHandler(async(req,res)=>{
   const current=await prisma.storeSetting.findUnique({where:{id:1}});
@@ -220,6 +239,7 @@ export const settings={
    where:{id:1},
    data:{policies:updatedPolicies}
   });
+  logAudit(req,{module:'SETTINGS',action:isPaused?'EMERGENCY_PAUSE_ACTIVATED':'EMERGENCY_PAUSE_DEACTIVATED',resourceId:'1',resourceName:'Emergency Pause',details:{isPaused,reason,message,resumesAt}});
   ok(res,updated,isPaused?'Store orders paused':'Store orders resumed');
  })
 };

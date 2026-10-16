@@ -96,6 +96,7 @@ model User {
   assignedVillageIds Json?
   vehicleType   String?
   vehicleNumber String?
+  deliveryStaffId String?       @unique
   currentLatitude  Decimal?     @db.Decimal(10, 8)
   currentLongitude Decimal?     @db.Decimal(11, 8)
   lastLoginAt   DateTime?
@@ -804,5 +805,32 @@ model CodSettlement {
   @@index([deliveryPersonId])
   @@index([settledById])
   @@map("cod_settlements")
+}
+
+model HomepageRankingConfig {
+  id          String    @id
+  bestSellers Json
+  topPicks    Json
+  version     Int       @default(1)
+  publishedAt DateTime?
+  publishedBy String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("homepage_ranking_configs")
+}
+
+model HomepageRankingHistory {
+  id          String   @id @default(cuid())
+  version     Int
+  bestSellers Json
+  topPicks    Json
+  publishedBy String?
+  note        String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@index([version])
+  @@index([createdAt])
+  @@map("homepage_ranking_history")
 }
 
