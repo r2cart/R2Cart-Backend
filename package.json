@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/server.js",
-    "build": "prisma generate",
-    "start": "node src/server.js",
+    "build": "prisma generate && prisma db push --skip-generate --accept-data-loss",
+    "start": "prisma db push --skip-generate --accept-data-loss && node src/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push --accept-data-loss",
     "db:seed": "node prisma/seed.js",
     "db:studio": "prisma studio",
     "test": "vitest run"
