@@ -71,12 +71,24 @@ export const customerLogin=asyncHandler(async(req,res)=>{
   });
 
   if (!user || !user.passwordHash || !await bcrypt.compare(password, user.passwordHash)) {
-    throw new AppError('Invalid email, staff ID, or password', 401);
+    throw new AppError('Invalid email, mobile or password', 401);
   }
 
-  if (user.role !== 'CUSTOMER') {
+  // Customer Login is strictly for Customers and Delivery Personnel
+  const isStoreOrSuperAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.role) || ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.staffRole);
+  if (isStoreOrSuperAdmin) {
+    logAudit(req, {
+      module: 'AUTH',
+      action: 'LOGIN_FAILED',
+      resourceName: rawIdentifier,
+      details: { attempted: rawIdentifier, reason: 'Staff attempted login through customer portal' }
+    });
+    throw new AppError('Invalid credentials or unauthorized access.', 401);
+  }
+
+  if (user.role === 'DELIVERY_PERSON') {
     if (user.isStaffActive === false || user.status !== 'ACTIVE') {
-      throw new AppError('Your account is currently deactivated. Please contact administrator.', 403);
+      throw new AppError('Your delivery account is currently deactivated. Please contact administrator.', 403);
     }
   } else {
     if (user.status !== 'ACTIVE') {
@@ -134,14 +146,27 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     }
   });
 
-  if(!user||!['ADMIN','MANAGER','SUPER_ADMIN','DELIVERY_PERSON'].includes(user.role)||!user.passwordHash||!await bcrypt.compare(password,user.passwordHash)){
+  if(!user||!user.passwordHash||!await bcrypt.compare(password,user.passwordHash)){
     logAudit(req,{
       module:'AUTH',
       action:'LOGIN_FAILED',
       resourceName:rawIdentifier,
       details:{attemptedEmail:rawIdentifier,reason:'Invalid credentials'}
     });
-    throw new AppError('Invalid credentials',401);
+    throw new AppError('Invalid credentials or unauthorized access.',401);
+  }
+
+  // Only Store Admins and Managers are authorized on this portal
+  const isSuper = user.role === 'SUPER_ADMIN' || user.staffRole === 'SUPER_ADMIN';
+  const isAdminOrManager = !isSuper && (['ADMIN', 'MANAGER'].includes(user.role) || ['ADMIN', 'MANAGER'].includes(user.staffRole));
+  if (!isAdminOrManager) {
+    logAudit(req,{
+      module:'AUTH',
+      action:'LOGIN_FAILED',
+      resourceName:rawIdentifier,
+      details:{attemptedEmail:rawIdentifier,reason:'Unauthorized access attempt to store admin portal'}
+    });
+    throw new AppError('Invalid credentials or unauthorized access.',401);
   }
 
   if(user.isStaffActive===false||user.status!=='ACTIVE'){
@@ -172,8 +197,73 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     details:{email:user.email,role:user.staffRole||user.role}
   });
 
-  const cookieName=user.role==='DELIVERY_PERSON'?'grocify_delivery_refresh':'grocify_admin_refresh';
+  const cookieName='grocify_admin_refresh';
   ok(res,await issue(res,user,{cookieName,cookiePath:'/'}),'Login successful');
+});
+
+export const superAdminLogin=asyncHandler(async(req,res)=>{
+  const rawIdentifier=String(req.body.identifier||req.body.email||req.body.mobile||'').trim();
+  const password=String(req.body.password||'');
+  const ip=req.ip||req.headers['x-forwarded-for']||req.socket.remoteAddress;
+
+  if(!rawIdentifier||!password){
+    throw new AppError('Identifier and password are required',400);
+  }
+
+  const normalizedEmail=rawIdentifier.toLowerCase();
+  const digitsOnly=rawIdentifier.replace(/\D/g,'');
+
+  const orConditions=[{email:normalizedEmail}];
+  if(digitsOnly.length>=7){
+    orConditions.push({mobile:digitsOnly});
+  }
+
+  const user=await prisma.user.findFirst({
+    where:{OR:orConditions}
+  });
+
+  if(!user||!user.passwordHash||!await bcrypt.compare(password,user.passwordHash)){
+    logAudit(req,{
+      module:'AUTH',
+      action:'LOGIN_FAILED',
+      resourceName:rawIdentifier,
+      details:{attemptedEmail:rawIdentifier,portal:'SUPER_ADMIN',reason:'Invalid credentials'}
+    });
+    throw new AppError('Invalid credentials or unauthorized access.',401);
+  }
+
+  const isSuper = user.role === 'SUPER_ADMIN' || user.staffRole === 'SUPER_ADMIN';
+  if(!isSuper){
+    logAudit(req,{
+      module:'AUTH',
+      action:'LOGIN_FAILED',
+      resourceName:rawIdentifier,
+      details:{attemptedEmail:rawIdentifier,portal:'SUPER_ADMIN',reason:'Unauthorized access attempt to super admin portal'}
+    });
+    throw new AppError('Invalid credentials or unauthorized access.',401);
+  }
+
+  if(user.isStaffActive===false||user.status!=='ACTIVE'){
+    throw new AppError('Your Super Admin account is currently deactivated.', 403);
+  }
+
+  await prisma.user.update({
+    where:{id:user.id},
+    data:{
+      lastLoginAt:new Date(),
+      lastLoginIp:String(ip||'').slice(0,45)
+    }
+  });
+
+  logAudit(req,{
+    module:'AUTH',
+    action:'LOGIN_SUCCESS',
+    resourceId:user.id,
+    resourceName:user.name,
+    details:{email:user.email,portal:'SUPER_ADMIN',role:'SUPER_ADMIN'}
+  });
+
+  ok(res,await issue(res,user,{cookieName:'grocify_admin_refresh',cookiePath:'/'}),'Super Admin login successful');
 });
 
 export const deliveryLogin=asyncHandler(async(req,res)=>{
@@ -203,7 +293,9 @@ export const deliveryLogin=asyncHandler(async(req,res)=>{
     }
   });
 
-  if(!user||!['DELIVERY_PERSON','SUPER_ADMIN','ADMIN','MANAGER'].includes(user.role)||!user.passwordHash||!await bcrypt.compare(password,user.passwordHash)){
+  const isDeliveryStaff = user && (user.role === 'DELIVERY_PERSON' || user.staffRole === 'DELIVERY_PERSON');
+
+  if(!user||!isDeliveryStaff||!user.passwordHash||!await bcrypt.compare(password,user.passwordHash)){
     logAudit(req,{
       module:'AUTH',
       action:'LOGIN_FAILED',

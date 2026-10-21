@@ -111,6 +111,7 @@ model User {
   codCollections     CodCollection[]
   codSettlements     CodSettlement[]      @relation("SettledCollections")
   adminSettlements   CodSettlement[]      @relation("AdminSettlements")
+  deliveryChatMessages DeliveryChatMessage[]
 
   @@map("users")
 }
@@ -324,6 +325,7 @@ model Order {
   deliveryProofs      DeliveryProof[]
   deliveryStatusLogs  DeliveryStatusLog[]
   codCollection       CodCollection?
+  deliveryChatMessages DeliveryChatMessage[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -832,5 +834,26 @@ model HomepageRankingHistory {
   @@index([version])
   @@index([createdAt])
   @@map("homepage_ranking_history")
+}
+
+model DeliveryChatMessage {
+  id           String             @id @default(cuid())
+  orderId      String
+  assignmentId String?
+  senderId     String
+  senderRole   String             // "CUSTOMER" | "DELIVERY_PERSON"
+  senderName   String
+  message      String             @db.Text
+  isRead       Boolean            @default(false)
+  readAt       DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  order        Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sender       User               @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@index([senderId])
+  @@map("delivery_chat_messages")
 }
 

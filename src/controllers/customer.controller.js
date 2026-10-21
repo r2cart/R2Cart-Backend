@@ -69,11 +69,46 @@ export const checkout=asyncHandler(async(req,res)=>{
     throw new AppError(`Cash on Delivery is currently unavailable for ${rules.villageName||address.area}.`,422);
   }
 
-  const addressSnapshot={id:address.id,name:address.name,mobile:address.mobile,house:address.house,street:address.street||'',landmark:address.landmark||'',area:address.area,city:address.city,district:address.district||'',state:address.state||'',pin:address.pin||'',type:address.type||'Home',deliveryZone:{id:rules.villageId||rules.zoneId,name:rules.villageName||rules.zoneName,estimatedDelivery:rules.estimatedDelivery}};
+  const addressSnapshot={id:address.id,name:address.name,fullName:address.name,mobile:address.mobile,house:address.house,street:address.street||'',landmark:address.landmark||'',area:address.area,villageName:rules.villageName||address.area,villageId:rules.villageId||rules.zoneId||null,city:address.city,district:address.district||'',state:address.state||'',pin:address.pin||'',pincode:address.pin||'',type:address.type||'Home',deliveryZone:{id:rules.villageId||rules.zoneId,name:rules.villageName||rules.zoneName,estimatedDelivery:rules.estimatedDelivery}};
   const result=await prisma.$transaction(async tx=>{const t=await calculateCart(tx,req.user.id,req.body.couponCode,rules);const order=await tx.order.create({data:{orderNumber:orderNumber(),userId:req.user.id,couponId:t.coupon?.id||null,status:'NEW',paymentMethod:'COD',paymentStatus:'PENDING',itemTotal:t.itemTotal,productDiscount:t.productDiscount,couponDiscount:t.couponDiscount,deliveryFee:t.deliveryFee,handlingFee:t.handlingFee,grandTotal:t.grandTotal,addressSnapshot,deliveryInstruction:req.body.deliveryInstruction||null,deliveryType,deliveryDate,deliverySlot,items:{create:t.cart.items.map(i=>({productId:i.productId,name:i.product.name,sku:i.product.sku,unit:i.product.unit,image:i.product.images[0]?.url||null,mrp:i.product.mrp,price:i.product.price,quantity:i.quantity}))},history:{create:{status:'NEW',note:deliveryType==='SCHEDULED'?`Order placed (Scheduled for ${deliveryDate}, ${deliverySlot})`:'Order placed'}},payment:{create:{method:'COD',status:'PENDING',amount:t.grandTotal}}},include:{items:true,history:true}});for(const item of t.cart.items){const current=await tx.product.findUnique({where:{id:item.productId},select:{id:true,name:true,stock:true}});if(!current||current.stock<item.quantity)throw new AppError(`Insufficient stock for ${current?.name||item.product?.name||'item'}. Only ${current?.stock||0} remaining.`,409);await tx.product.update({where:{id:item.productId},data:{stock:Math.max(0,current.stock-item.quantity)}});if(tx.inventoryLog?.create)await tx.inventoryLog.create({data:{productId:item.productId,type:'ORDER_DEDUCT',previousStock:current.stock,newStock:Math.max(0,current.stock-item.quantity),quantityDiff:-item.quantity,reason:`Order placed #${order.orderNumber}`,orderId:order.id}})}if(t.coupon){await tx.coupon.update({where:{id:t.coupon.id},data:{usageCount:{increment:1}}});await tx.couponUsage.create({data:{couponId:t.coupon.id,userId:req.user.id,orderId:order.id}})}await tx.cartItem.deleteMany({where:{cartId:t.cart.id}});return order},{maxWait:15000,timeout:30000});created(res,orderDto(result),'Order placed successfully');notifyAdminsNewOrder(result).catch(e=>console.error('Admin order push error:',e.message));notifyCustomerOrderPlaced(result).catch(e=>console.error('Customer order push error:',e.message));sendFcmToAdminsNewOrder(result).catch(e=>console.error('Admin FCM order push error:',e.message));sendFcmToCustomerOrderPlaced(result).catch(e=>console.error('Customer FCM order push error:',e.message))});
 export const orders={
-  list:asyncHandler(async(req,res)=>{const rows=await prisma.order.findMany({where:{userId:req.user.id},include:{items:true,history:true},orderBy:{createdAt:'desc'}});ok(res,rows.map(orderDto))}),
-  get:asyncHandler(async(req,res)=>{const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}],userId:req.user.id},include:{items:true,history:true,payment:true}});if(!row)throw new AppError('Order not found',404);ok(res,orderDto(row))}),
+  list:asyncHandler(async(req,res)=>{
+    const rows=await prisma.order.findMany({
+      where:{userId:req.user.id},
+      include:{
+        items:true,
+        history:{orderBy:{createdAt:'asc'}},
+        deliveryAssignments:{
+          orderBy:{createdAt:'desc'},
+          include:{
+            deliveryPerson:{select:{id:true,name:true,mobile:true,vehicleType:true,vehicleNumber:true}},
+            proofs:{select:{id:true,cloudinaryUrl:true,cloudinaryPublicId:true,recipientName:true,recipientPhone:true,notes:true,createdAt:true}}
+          }
+        }
+      },
+      orderBy:{createdAt:'desc'}
+    });
+    ok(res,rows.map(orderDto));
+  }),
+  get:asyncHandler(async(req,res)=>{
+    const row=await prisma.order.findFirst({
+      where:{OR:[{id:req.params.id},{orderNumber:req.params.id}],userId:req.user.id},
+      include:{
+        items:true,
+        history:{orderBy:{createdAt:'asc'}},
+        payment:true,
+        deliveryAssignments:{
+          orderBy:{createdAt:'desc'},
+          include:{
+            deliveryPerson:{select:{id:true,name:true,mobile:true,vehicleType:true,vehicleNumber:true}},
+            proofs:{select:{id:true,cloudinaryUrl:true,cloudinaryPublicId:true,recipientName:true,recipientPhone:true,notes:true,createdAt:true}}
+          }
+        }
+      }
+    });
+    if(!row)throw new AppError('Order not found',404);
+    ok(res,orderDto(row));
+  }),
   cancel:asyncHandler(async(req,res)=>{
     const reason=String(req.body?.reason||'').trim()||'Cancelled by customer';
     const orderId=req.params.id;
@@ -158,25 +193,6 @@ export const orders={
       updateSavedAddress
     } = req.body;
 
-    const trimmedName = String(name || '').trim();
-    const cleanMobile = String(mobile || '').replace(/\D/g, '');
-    const trimmedHouse = String(house || '').trim();
-    const trimmedArea = String(area || '').trim();
-    const trimmedCity = String(city || 'Hathua').trim();
-
-    if (trimmedName.length < 2) {
-      throw new AppError('Enter a valid recipient name (at least 2 characters)', 422);
-    }
-    if (!/^\d{10}$/.test(cleanMobile)) {
-      throw new AppError('Enter a valid 10-digit mobile number', 422);
-    }
-    if (!trimmedHouse) {
-      throw new AppError('House, flat, or building information is required', 422);
-    }
-    if (!trimmedArea) {
-      throw new AppError('Area or village locality is required', 422);
-    }
-
     const row = await prisma.$transaction(async tx => {
       const current = await tx.order.findFirst({
         where: {
@@ -195,27 +211,44 @@ export const orders={
         throw new AppError(`Cannot modify order in status ${current.status}`, 409);
       }
 
-      let rules = null;
-      try {
-        rules = await resolveDeliveryRules(prisma, trimmedArea);
-      } catch {}
-
       let snap = current.addressSnapshot;
       if (typeof snap === 'string') {
         try { snap = JSON.parse(snap); } catch { snap = {}; }
       }
       snap = snap || {};
 
+      const trimmedName = String(name || snap.fullName || snap.name || req.user.name || '').trim();
+      const cleanMobile = String(mobile || snap.mobile || req.user.mobile || '').replace(/\D/g, '');
+      const trimmedHouse = String(house || snap.house || snap.street || 'Address on file').trim();
+      const trimmedArea = String(area || snap.area || snap.villageName || 'Hathua').trim();
+      const trimmedCity = String(city || snap.city || 'Hathua').trim();
+
+      if (trimmedName.length < 2) {
+        throw new AppError('Enter a valid recipient name (at least 2 characters)', 422);
+      }
+      if (cleanMobile.length < 7) {
+        throw new AppError('Enter a valid mobile number', 422);
+      }
+
+      let rules = null;
+      try {
+        rules = await resolveDeliveryRules(prisma, trimmedArea);
+      } catch {}
+
       const newSnapshot = {
         ...snap,
         name: trimmedName,
+        fullName: trimmedName,
         mobile: cleanMobile,
         house: trimmedHouse,
         street: String(street || '').trim(),
         landmark: String(landmark || '').trim(),
         area: trimmedArea,
+        villageName: rules?.villageName || trimmedArea,
+        villageId: rules?.villageId || rules?.zoneId || snap.villageId || null,
         city: trimmedCity,
         pin: String(pin || '').trim(),
+        pincode: String(pin || '').trim(),
         deliveryZone: rules ? {
           id: rules.villageId || rules.zoneId,
           name: rules.villageName || rules.zoneName,

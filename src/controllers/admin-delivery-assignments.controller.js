@@ -2,6 +2,8 @@ import { prisma } from '../config/prisma.js';
 import { AppError, asyncHandler, created, ok } from '../utils/response.js';
 import { logAudit } from '../services/audit.service.js';
 import { getDeliveryProofUrl } from '../services/image.service.js';
+import { notifyRiderNewAssignment, notifyRiderReassignedAway } from '../services/notification.service.js';
+import { sendFcmToRiderNewAssignment, sendFcmToRiderReassignedAway } from '../services/fcm.service.js';
 
 export const adminDeliveryAssignments = {
   // 1. List Delivery Staff with Workload & Availability
@@ -97,7 +99,7 @@ export const adminDeliveryAssignments = {
     if (villageId) {
       result = result.filter(s => {
         const vIds = Array.isArray(s.assignedVillageIds) ? s.assignedVillageIds : [];
-        return vIds.includes(villageId);
+        return vIds.length === 0 || vIds.includes(villageId);
       });
     }
 
@@ -109,7 +111,7 @@ export const adminDeliveryAssignments = {
     const { villageId, search, date } = req.query;
 
     const where = {
-      status: { in: ['NEW', 'CONFIRMED', 'PACKING'] },
+      status: { notIn: ['DELIVERED', 'CANCELLED'] },
       deliveryAssignments: {
         none: {
           isCurrent: true,
@@ -143,15 +145,22 @@ export const adminDeliveryAssignments = {
 
     let formatted = orders.map(o => {
       const addr = typeof o.addressSnapshot === 'object' && o.addressSnapshot ? o.addressSnapshot : {};
+      const villageName = addr.villageName || addr.village || addr.area || addr.deliveryZone?.name || '';
+      const villageId = addr.villageId || addr.deliveryZone?.id || null;
+      const customerName = addr.fullName || addr.name || o.user?.name || 'Customer';
+      const customerMobile = addr.mobile || addr.phone || o.user?.mobile || '';
+      const addressLine = [addr.house, addr.street, addr.landmark, addr.area || addr.villageName, addr.city, addr.pin || addr.pincode].filter(Boolean).join(', ');
+
       return {
         id: o.id,
         orderNumber: o.orderNumber,
         status: o.status,
-        customerName: addr.fullName || o.user?.name || 'Customer',
-        customerMobile: addr.mobile || o.user?.mobile || '',
-        addressLine: [addr.street, addr.landmark, addr.villageName, addr.city, addr.pincode].filter(Boolean).join(', '),
-        villageName: addr.villageName || '',
-        villageId: addr.villageId || null,
+        customerName,
+        customerMobile,
+        addressLine: addressLine || 'Address not provided',
+        villageName,
+        villageId,
+        area: addr.area || '',
         grandTotal: Number(o.grandTotal),
         paymentMethod: o.paymentMethod,
         paymentStatus: o.paymentStatus,
@@ -252,6 +261,12 @@ export const adminDeliveryAssignments = {
 
     const formatted = rows.map(r => {
       const addr = typeof r.order?.addressSnapshot === 'object' && r.order?.addressSnapshot ? r.order.addressSnapshot : {};
+      const villageName = addr.villageName || addr.village || addr.area || addr.deliveryZone?.name || '';
+      const villageId = addr.villageId || addr.deliveryZone?.id || null;
+      const customerName = addr.fullName || addr.name || r.order?.user?.name || 'Customer';
+      const customerMobile = addr.mobile || addr.phone || r.order?.user?.mobile || '';
+      const deliveryAddress = [addr.house, addr.street, addr.landmark, addr.area || addr.villageName, addr.city, addr.pin || addr.pincode].filter(Boolean).join(', ');
+
       return {
         id: r.id,
         orderId: r.orderId,
@@ -262,7 +277,7 @@ export const adminDeliveryAssignments = {
         acceptedAt: r.acceptedAt,
         pickedUpAt: r.pickedUpAt,
         outForDeliveryAt: r.outForDeliveryAt,
-        deliveredAt: r.deliveredAt,
+        deliveredAt: r.deliveredAt || (r.status === 'DELIVERED' ? r.updatedAt : null),
         failedAt: r.failedAt,
         failureReason: r.failureReason,
         failureNotes: r.failureNotes,
@@ -271,10 +286,12 @@ export const adminDeliveryAssignments = {
         grandTotal: Number(r.order?.grandTotal || 0),
         paymentMethod: r.order?.paymentMethod,
         paymentStatus: r.order?.paymentStatus,
-        customerName: addr.fullName || r.order?.user?.name || 'Customer',
-        customerMobile: addr.mobile || r.order?.user?.mobile || '',
-        deliveryAddress: [addr.street, addr.landmark, addr.villageName, addr.city, addr.pincode].filter(Boolean).join(', '),
-        villageName: addr.villageName || '',
+        customerName,
+        customerMobile,
+        deliveryAddress: deliveryAddress || 'Address not provided',
+        villageName,
+        villageId,
+        area: addr.area || '',
         deliverySlot: r.order?.deliverySlot,
         deliveryDate: r.order?.deliveryDate,
         deliveryPerson: r.deliveryPerson,
@@ -338,6 +355,12 @@ export const adminDeliveryAssignments = {
     if (staff.isStaffActive === false) {
       throw new AppError('This delivery staff member is currently deactivated', 400);
     }
+    if (staff.dutyStatus === 'ON_BREAK') {
+      throw new AppError(`Cannot assign order: ${staff.name} is currently ON BREAK. Orders cannot be assigned while staff is on break.`, 400);
+    }
+    if (staff.dutyStatus !== 'ON_DUTY') {
+      throw new AppError(`Cannot assign order: ${staff.name} is currently OFF DUTY. Delivery partner must be active and ON DUTY to receive order assignments.`, 400);
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Create delivery assignment
@@ -388,6 +411,10 @@ export const adminDeliveryAssignments = {
       }
     });
 
+    // Notify Rider via WebPush and FCM
+    notifyRiderNewAssignment(result, order, staff).catch(e => console.error('Rider push error:', e.message));
+    sendFcmToRiderNewAssignment(result, order, staff).catch(e => console.error('Rider FCM error:', e.message));
+
     created(res, result, `Order ${order.orderNumber} assigned to ${staff.name}`);
   }),
 
@@ -424,6 +451,12 @@ export const adminDeliveryAssignments = {
     const newStaff = await prisma.user.findUnique({ where: { id: newDeliveryPersonId } });
     if (!newStaff || newStaff.isStaffActive === false) {
       throw new AppError('Target delivery staff member is invalid or deactivated', 400);
+    }
+    if (newStaff.dutyStatus === 'ON_BREAK') {
+      throw new AppError(`Cannot reassign order: ${newStaff.name} is currently ON BREAK. Orders cannot be reassigned to staff on break.`, 400);
+    }
+    if (newStaff.dutyStatus !== 'ON_DUTY') {
+      throw new AppError(`Cannot reassign order: ${newStaff.name} is currently OFF DUTY. Target delivery partner must be ON DUTY.`, 400);
     }
 
     const result = await prisma.$transaction(async (tx) => {
@@ -482,6 +515,12 @@ export const adminDeliveryAssignments = {
         reason
       }
     });
+
+    // Notify New Rider of assignment and Old Rider of reassignment
+    notifyRiderNewAssignment(result, order, newStaff).catch(e => console.error('New rider push error:', e.message));
+    sendFcmToRiderNewAssignment(result, order, newStaff).catch(e => console.error('New rider FCM error:', e.message));
+    notifyRiderReassignedAway(activeAssignment, order, activeAssignment.deliveryPerson).catch(e => console.error('Old rider push error:', e.message));
+    sendFcmToRiderReassignedAway(activeAssignment, order, activeAssignment.deliveryPerson).catch(e => console.error('Old rider FCM error:', e.message));
 
     ok(res, result, `Order ${order.orderNumber} successfully reassigned to ${newStaff.name}`);
   }),
@@ -542,15 +581,21 @@ export const adminDeliveryAssignments = {
 
     const formatted = rows.map(r => {
       const addr = typeof r.order?.addressSnapshot === 'object' && r.order?.addressSnapshot ? r.order.addressSnapshot : {};
+      const villageName = addr.villageName || addr.village || addr.area || addr.deliveryZone?.name || '';
+      const customerName = addr.fullName || addr.name || r.order?.user?.name || 'Customer';
+      const customerMobile = addr.mobile || addr.phone || r.order?.user?.mobile || '';
+      const deliveryAddress = [addr.house, addr.street, addr.landmark, addr.area || addr.villageName, addr.city, addr.pin || addr.pincode].filter(Boolean).join(', ');
+
       return {
         id: r.id,
         orderId: r.orderId,
         orderNumber: r.order?.orderNumber,
         assignmentId: r.assignmentId,
         deliveryPerson: r.deliveryPerson,
-        customerName: addr.fullName || r.order?.user?.name || 'Customer',
-        customerMobile: addr.mobile || r.order?.user?.mobile || '',
-        deliveryAddress: [addr.street, addr.villageName, addr.city].filter(Boolean).join(', '),
+        customerName,
+        customerMobile,
+        deliveryAddress: deliveryAddress || 'Address not provided',
+        villageName,
         cloudinaryPublicId: r.cloudinaryPublicId,
         cloudinaryUrl: r.cloudinaryUrl,
         signedUrl: getDeliveryProofUrl(r.cloudinaryPublicId, r.cloudinaryUrl),
@@ -562,7 +607,7 @@ export const adminDeliveryAssignments = {
         recipientPhone: r.recipientPhone,
         customerOtp: r.customerOtp,
         notes: r.notes,
-        deliveredAt: r.assignment?.deliveredAt,
+        deliveredAt: r.assignment?.deliveredAt || r.createdAt,
         grandTotal: Number(r.order?.grandTotal || 0),
         createdAt: r.createdAt
       };
@@ -685,7 +730,7 @@ export const adminDeliveryAssignments = {
         settlementNumber: r.settlement?.settlementNumber || null,
         settledAt: r.settlement?.settledAt || null,
         discrepancyNote: r.discrepancyNote,
-        customerName: addr.fullName || 'Customer',
+        customerName: addr.fullName || addr.name || 'Customer',
         collectedAt: r.collectedAt,
         createdAt: r.createdAt
       };

@@ -7,13 +7,22 @@ import {logAudit} from '../services/audit.service.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
-const include={user:{select:{id:true,name:true,email:true,mobile:true}},items:true,history:{orderBy:{createdAt:'asc'}},payment:true,coupon:true};
+const include={
+  user:{select:{id:true,name:true,email:true,mobile:true}},
+  items:true,
+  history:{orderBy:{createdAt:'asc'}},
+  payment:true,
+  coupon:true,
+  deliveryAssignments:{
+    orderBy:{createdAt:'desc'},
+    include:{
+      deliveryPerson:{select:{id:true,name:true,mobile:true,vehicleType:true,vehicleNumber:true}},
+      proofs:{select:{id:true,cloudinaryUrl:true,cloudinaryPublicId:true,recipientName:true,recipientPhone:true,notes:true,createdAt:true}}
+    }
+  }
+};
 const orderDetailsInclude={
   ...include,
-  deliveryAssignments:{
-    where:{isCurrent:true},
-    include:{deliveryPerson:{select:{id:true,name:true,mobile:true,vehicleType:true,vehicleNumber:true}}}
-  },
   deliveryProofs:{orderBy:{createdAt:'desc'}},
   codCollection:true
 };
@@ -37,6 +46,12 @@ export const orders={
    }
    const changed=await tx.order.updateMany({where:{id:current.id,status:current.status},data:{status}});
    if(changed.count!==1)throw new AppError('Order changed in another session. Refresh and retry.',409);
+   if(status==='DELIVERED'){
+    await tx.deliveryAssignment.updateMany({
+      where:{orderId:current.id,isCurrent:true,deliveredAt:null},
+      data:{status:'DELIVERED',deliveredAt:new Date()}
+    });
+   }
    if(status==='CANCELLED'){
     for(const item of current.items){
      let prevStock=0;

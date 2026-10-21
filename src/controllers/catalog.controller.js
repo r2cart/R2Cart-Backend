@@ -29,17 +29,33 @@ export const delivery=asyncHandler(async(req,res)=>{
     prisma.storeSetting.findUnique({where:{id:1}})
   ]);
 
-  const activeVillages=villages.filter(v=>!v.isPaused).map(v=>({
-    id:v.id,
-    name:v.name,
-    pincode:v.pincode,
-    deliveryFee:Number(v.deliveryFee),
-    minimumOrder:Number(v.minimumOrder),
-    freeDeliveryThreshold:Number(v.freeDeliveryThreshold),
-    radiusKm:Number(v.radiusKm||5),
-    schedule:v.schedule,
-    isVillage:true
-  }));
+  const activeVillages=villages.filter(v=>!v.isPaused).map(v=>{
+    const fee = v.deliveryFee !== null && v.deliveryFee !== undefined && v.deliveryFee !== ''
+      ? Number(v.deliveryFee)
+      : Number(settings?.deliveryFee || 20);
+    const minOrder = v.minimumOrder !== null && v.minimumOrder !== undefined && v.minimumOrder !== ''
+      ? Number(v.minimumOrder)
+      : Number(settings?.minimumOrder || 199);
+    const freeThresh = v.freeDeliveryThreshold !== null && v.freeDeliveryThreshold !== undefined && v.freeDeliveryThreshold !== ''
+      ? Number(v.freeDeliveryThreshold)
+      : Number(settings?.freeDeliveryThreshold || 499);
+    const estMins = v.estimatedMinutes ? Number(v.estimatedMinutes) : 30;
+
+    return {
+      id:v.id,
+      name:v.name,
+      pincode:v.pincode,
+      deliveryFee:fee,
+      minimumOrder:minOrder,
+      freeDeliveryThreshold:freeThresh,
+      radiusKm:Number(v.radiusKm||settings?.globalDeliveryRadius||5),
+      estimatedMinutes:estMins,
+      schedule:v.schedule,
+      allowCod:v.allowCod ?? true,
+      allowScheduled:v.allowScheduled ?? true,
+      isVillage:true
+    };
+  });
 
   const activeAreas=areas.filter(a=>!a.isPaused).map(a=>({
     id:a.id,

@@ -180,6 +180,11 @@ export function hasPermission(user, requiredPermission) {
     return false;
   }
 
+  // Wildcard / Full admin grant
+  if (perms.all === true || perms['*'] === true) {
+    return true;
+  }
+
   // Direct grant
   if (perms[requiredPermission] === true) {
     return true;

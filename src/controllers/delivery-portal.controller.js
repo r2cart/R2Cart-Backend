@@ -47,7 +47,7 @@ export const deliveryPortal = {
           }
         },
         proofs: {
-          select: { id: true, cloudinaryUrl: true, cloudinaryPublicId: true, verificationStatus: true, createdAt: true }
+          select: { id: true, cloudinaryUrl: true, cloudinaryPublicId: true, verificationStatus: true, recipientName: true, recipientPhone: true, notes: true, createdAt: true }
         },
         codCollection: {
           select: { id: true, expectedAmount: true, collectedAmount: true, settlementStatus: true }
@@ -58,7 +58,8 @@ export const deliveryPortal = {
 
     const formatted = assignments.map(a => {
       const addr = typeof a.order?.addressSnapshot === 'object' && a.order?.addressSnapshot ? a.order.addressSnapshot : {};
-      const fullAddress = [addr.street, addr.landmark, addr.villageName, addr.city, addr.pincode].filter(Boolean).join(', ');
+      const villageName = addr.villageName || addr.village || addr.area || addr.deliveryZone?.name || '';
+      const fullAddress = [addr.house, addr.street, addr.landmark, addr.area || addr.villageName, addr.city, addr.pin || addr.pincode].filter(Boolean).join(', ') || 'Address not provided';
       const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`;
 
       return {
@@ -71,15 +72,15 @@ export const deliveryPortal = {
         acceptedAt: a.acceptedAt,
         pickedUpAt: a.pickedUpAt,
         outForDeliveryAt: a.outForDeliveryAt,
-        deliveredAt: a.deliveredAt,
+        deliveredAt: a.deliveredAt || (a.status === 'DELIVERED' ? a.updatedAt : null),
         failedAt: a.failedAt,
         failureReason: a.failureReason,
         failureNotes: a.failureNotes,
         notes: a.notes,
-        customerName: addr.fullName || a.order?.user?.name || 'Customer',
-        customerPhone: addr.mobile || a.order?.user?.mobile || '',
+        customerName: addr.fullName || addr.name || a.order?.user?.name || 'Customer',
+        customerPhone: addr.mobile || addr.phone || a.order?.user?.mobile || '',
         deliveryAddress: fullAddress,
-        villageName: addr.villageName || '',
+        villageName,
         googleMapsUrl,
         grandTotal: Number(a.order?.grandTotal || 0),
         paymentMethod: a.order?.paymentMethod,
@@ -137,7 +138,8 @@ export const deliveryPortal = {
     }
 
     const addr = typeof assignment.order?.addressSnapshot === 'object' && assignment.order?.addressSnapshot ? assignment.order.addressSnapshot : {};
-    const fullAddress = [addr.street, addr.landmark, addr.villageName, addr.city, addr.pincode].filter(Boolean).join(', ');
+    const villageName = addr.villageName || addr.village || addr.area || addr.deliveryZone?.name || '';
+    const fullAddress = [addr.house, addr.street, addr.landmark, addr.area || addr.villageName, addr.city, addr.pin || addr.pincode].filter(Boolean).join(', ') || 'Address not provided';
     const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`;
 
     const responseData = {
@@ -150,14 +152,14 @@ export const deliveryPortal = {
       acceptedAt: assignment.acceptedAt,
       pickedUpAt: assignment.pickedUpAt,
       outForDeliveryAt: assignment.outForDeliveryAt,
-      deliveredAt: assignment.deliveredAt,
+      deliveredAt: assignment.deliveredAt || (assignment.status === 'DELIVERED' ? assignment.updatedAt : null),
       failedAt: assignment.failedAt,
       failureReason: assignment.failureReason,
       failureNotes: assignment.failureNotes,
-      customerName: addr.fullName || assignment.order?.user?.name || 'Customer',
-      customerPhone: addr.mobile || assignment.order?.user?.mobile || '',
+      customerName: addr.fullName || addr.name || assignment.order?.user?.name || 'Customer',
+      customerPhone: addr.mobile || addr.phone || assignment.order?.user?.mobile || '',
       deliveryAddress: fullAddress,
-      villageName: addr.villageName || '',
+      villageName,
       googleMapsUrl,
       grandTotal: Number(assignment.order?.grandTotal || 0),
       paymentMethod: assignment.order?.paymentMethod,
@@ -198,7 +200,7 @@ export const deliveryPortal = {
 
     const assignment = await prisma.deliveryAssignment.findFirst({
       where: {
-        id,
+        OR: [{ id }, { orderId: id }],
         isCurrent: true,
         ...(isSuperOrAdmin ? {} : { deliveryPersonId })
       },
@@ -295,7 +297,7 @@ export const deliveryPortal = {
 
     const assignment = await prisma.deliveryAssignment.findFirst({
       where: {
-        id,
+        OR: [{ id }, { orderId: id }],
         isCurrent: true,
         ...(isSuperOrAdmin ? {} : { deliveryPersonId })
       },
@@ -385,7 +387,7 @@ export const deliveryPortal = {
 
     const assignment = await prisma.deliveryAssignment.findFirst({
       where: {
-        id,
+        OR: [{ id }, { orderId: id }],
         isCurrent: true,
         ...(isSuperOrAdmin ? {} : { deliveryPersonId })
       },
@@ -545,7 +547,7 @@ export const deliveryPortal = {
 
     const assignment = await prisma.deliveryAssignment.findFirst({
       where: {
-        id,
+        OR: [{ id }, { orderId: id }],
         isCurrent: true,
         ...(isSuperOrAdmin ? {} : { deliveryPersonId })
       },

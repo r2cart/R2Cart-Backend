@@ -208,3 +208,81 @@ export async function sendFcmToCustomerStatusUpdate(order, newStatus, note = '')
     console.error('Error in sendFcmToCustomerStatusUpdate:', err.message);
   }
 }
+
+export async function sendFcmToRiderNewAssignment(assignment, order, staff) {
+  try {
+    const riderId = assignment.deliveryPersonId || staff?.id;
+    if (!riderId) return;
+
+    const riderTokens = await prisma.deviceToken.findMany({
+      where: {
+        OR: [
+          { userId: riderId },
+          { user: { id: riderId } },
+          { role: 'DELIVERY_PERSON', userId: riderId },
+        ],
+      },
+    });
+
+    if (!riderTokens.length) return;
+
+    const addr = typeof order?.addressSnapshot === 'object' && order.addressSnapshot ? order.addressSnapshot : {};
+    const village = addr.villageName || addr.village || addr.area || addr.deliveryZone?.name || 'Customer location';
+    const total = Number(order?.grandTotal || 0).toLocaleString('en-IN');
+    const itemsCount = (order?.items || []).length || 1;
+
+    await sendFcmMulticast({
+      tokens: riderTokens.map((t) => t.token),
+      notification: {
+        title: '🛵 New Delivery Assigned!',
+        body: `Order #${order?.orderNumber || ''} (₹${total}, ${itemsCount} items) in ${village} assigned to you. Tap to accept.`,
+      },
+      data: {
+        url: `/delivery`,
+        assignmentId: assignment.id,
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        type: 'RIDER_NEW_ASSIGNMENT',
+      },
+    });
+  } catch (err) {
+    console.error('Error in sendFcmToRiderNewAssignment:', err.message);
+  }
+}
+
+export async function sendFcmToRiderReassignedAway(assignment, order, staff) {
+  try {
+    const riderId = assignment.deliveryPersonId || staff?.id;
+    if (!riderId) return;
+
+    const riderTokens = await prisma.deviceToken.findMany({
+      where: {
+        OR: [
+          { userId: riderId },
+          { user: { id: riderId } },
+          { role: 'DELIVERY_PERSON', userId: riderId },
+        ],
+      },
+    });
+
+    if (!riderTokens.length) return;
+
+    await sendFcmMulticast({
+      tokens: riderTokens.map((t) => t.token),
+      notification: {
+        title: 'ℹ️ Delivery Reassigned',
+        body: `Order #${order?.orderNumber} was reassigned to another delivery partner.`,
+      },
+      data: {
+        url: `/delivery`,
+        assignmentId: assignment.id,
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        type: 'RIDER_REASSIGNED',
+      },
+    });
+  } catch (err) {
+    console.error('Error in sendFcmToRiderReassignedAway:', err.message);
+  }
+}
+

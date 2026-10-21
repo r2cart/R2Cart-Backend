@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { deliveryPortal } from '../controllers/delivery-portal.controller.js';
+import { deliveryChatController } from '../controllers/delivery-chat.controller.js';
 import { authenticate, authorizeDeliveryPerson } from '../middleware/auth.js';
 import { deliveryProofUpload } from '../middleware/upload.js';
 
@@ -16,9 +17,13 @@ deliveryRouter.post('/orders/:id/upload-proof', deliveryProofUpload.single('proo
 deliveryRouter.post('/orders/:id/complete-delivery', deliveryPortal.completeDelivery);
 deliveryRouter.post('/orders/:id/report-failure', deliveryPortal.reportFailure);
 
-// 2. Profile & Duty Status
+// 2. Rider-Customer Delivery Chat
+deliveryRouter.get('/orders/:id/chat', deliveryChatController.getRiderChat);
+deliveryRouter.post('/orders/:id/chat', deliveryChatController.sendRiderMessage);
+
+// 3. Profile & Duty Status
 deliveryRouter.get('/profile', deliveryPortal.getMyProfile);
 deliveryRouter.patch('/duty-status', deliveryPortal.updateDutyStatus);
 
-// 3. COD Collections & Settlement Status
+// 4. COD Collections & Settlement Status
 deliveryRouter.get('/cod-summary', deliveryPortal.getMyCodSummary);

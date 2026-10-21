@@ -232,6 +232,51 @@ export async function ensureHomepageRankingTables() {
   }
 }
 
+export async function ensureDeliveryChatTable() {
+  try {
+    const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+    if (isPostgres) {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "delivery_chat_messages" (
+          "id" VARCHAR(191) PRIMARY KEY,
+          "orderId" VARCHAR(191) NOT NULL,
+          "assignmentId" VARCHAR(191),
+          "senderId" VARCHAR(191) NOT NULL,
+          "senderRole" VARCHAR(50) NOT NULL,
+          "senderName" VARCHAR(191) NOT NULL,
+          "message" TEXT NOT NULL,
+          "isRead" BOOLEAN NOT NULL DEFAULT false,
+          "readAt" TIMESTAMP,
+          "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+      `).catch(() => {});
+    } else {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS \`delivery_chat_messages\` (
+          \`id\` VARCHAR(191) NOT NULL,
+          \`orderId\` VARCHAR(191) NOT NULL,
+          \`assignmentId\` VARCHAR(191) NULL,
+          \`senderId\` VARCHAR(191) NOT NULL,
+          \`senderRole\` VARCHAR(50) NOT NULL,
+          \`senderName\` VARCHAR(191) NOT NULL,
+          \`message\` TEXT NOT NULL,
+          \`isRead\` BOOLEAN NOT NULL DEFAULT false,
+          \`readAt\` DATETIME(3) NULL,
+          \`createdAt\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          \`updatedAt\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (\`id\`),
+          INDEX \`delivery_chat_messages_orderId_createdAt_idx\` (\`orderId\`, \`createdAt\`),
+          INDEX \`delivery_chat_messages_senderId_idx\` (\`senderId\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `).catch(() => {});
+    }
+    console.log('[Schema] delivery_chat_messages table verified.');
+  } catch (err) {
+    console.warn('[Schema] delivery_chat_messages table notice:', err.message);
+  }
+}
+
 export function autoSyncPrismaSchema() {
   if (process.env.AUTO_SYNC_PRISMA === 'true') {
     try {

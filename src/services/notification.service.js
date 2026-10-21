@@ -234,3 +234,169 @@ export async function notifyCustomerOrderStatusUpdate(order, newStatus, note = '
     console.error('Error in notifyCustomerOrderStatusUpdate:', err.message);
   }
 }
+
+export async function notifyRiderNewAssignment(assignment, order, staff) {
+  try {
+    const riderId = assignment.deliveryPersonId || staff?.id;
+    if (!riderId) return;
+
+    const riderSubs = await prisma.pushSubscription.findMany({
+      where: {
+        OR: [
+          { userId: riderId },
+          { user: { id: riderId } },
+          { role: 'DELIVERY_PERSON', userId: riderId },
+        ],
+      },
+    });
+
+    if (!riderSubs.length) {
+      console.log(`[Push Notification] No active push subscription for rider ${staff?.name || riderId}`);
+      return;
+    }
+
+    const addr = typeof order?.addressSnapshot === 'object' && order.addressSnapshot ? order.addressSnapshot : {};
+    const village = addr.villageName || addr.village || addr.area || addr.deliveryZone?.name || 'Customer location';
+    const total = Number(order?.grandTotal || 0).toLocaleString('en-IN');
+    const itemsCount = (order?.items || []).length || 1;
+
+    const payload = {
+      title: '🛵 New Delivery Assigned!',
+      body: `Order #${order?.orderNumber || ''} (₹${total}, ${itemsCount} items) in ${village} assigned to you. Tap to accept.`,
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
+      tag: `rider-assignment-${assignment.id}`,
+      url: `/delivery`,
+      data: {
+        url: `/delivery`,
+        assignmentId: assignment.id,
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        type: 'RIDER_NEW_ASSIGNMENT',
+      },
+    };
+
+    const results = await Promise.allSettled(
+      riderSubs.map((sub) => sendNotificationToSubscription(sub, payload))
+    );
+    const sentCount = results.filter((r) => r.status === 'fulfilled' && r.value?.success).length;
+    console.log(`[Push Notification] Dispatched new assignment #${order?.orderNumber} to rider ${staff?.name}: ${sentCount}/${riderSubs.length} delivered.`);
+  } catch (err) {
+    console.error('Error in notifyRiderNewAssignment:', err.message);
+  }
+}
+
+export async function notifyRiderReassignedAway(assignment, order, staff) {
+  try {
+    const riderId = assignment.deliveryPersonId || staff?.id;
+    if (!riderId) return;
+
+    const riderSubs = await prisma.pushSubscription.findMany({
+      where: {
+        OR: [
+          { userId: riderId },
+          { user: { id: riderId } },
+          { role: 'DELIVERY_PERSON', userId: riderId },
+        ],
+      },
+    });
+
+    if (!riderSubs.length) return;
+
+    const payload = {
+      title: 'ℹ️ Delivery Reassigned',
+      body: `Order #${order?.orderNumber} was reassigned to another delivery partner.`,
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
+      tag: `rider-reassigned-${assignment.id}`,
+      url: `/delivery`,
+      data: {
+        url: `/delivery`,
+        assignmentId: assignment.id,
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        type: 'RIDER_REASSIGNED',
+      },
+    };
+
+    await Promise.allSettled(
+      riderSubs.map((sub) => sendNotificationToSubscription(sub, payload))
+    );
+  } catch (err) {
+    console.error('Error in notifyRiderReassignedAway:', err.message);
+  }
+}
+
+export async function notifyRiderDeliveryChatMessage(riderId, order, messageText, customerName) {
+  try {
+    if (!riderId) return;
+    const riderSubs = await prisma.pushSubscription.findMany({
+      where: {
+        OR: [
+          { userId: riderId },
+          { user: { id: riderId } },
+          { role: 'DELIVERY_PERSON', userId: riderId }
+        ]
+      }
+    });
+    if (!riderSubs.length) return;
+
+    const payload = {
+      title: `💬 Message from ${customerName || 'Customer'} (#${order?.orderNumber})`,
+      body: String(messageText || '').slice(0, 120),
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
+      tag: `chat-rider-${order?.id}`,
+      url: `/delivery/dashboard`,
+      data: {
+        url: `/delivery/dashboard`,
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        type: 'DELIVERY_CHAT_MESSAGE'
+      }
+    };
+
+    await Promise.allSettled(
+      riderSubs.map(sub => sendNotificationToSubscription(sub, payload))
+    );
+  } catch (err) {
+    console.error('Error in notifyRiderDeliveryChatMessage:', err.message);
+  }
+}
+
+export async function notifyCustomerDeliveryChatMessage(customerId, order, messageText, riderName) {
+  try {
+    if (!customerId) return;
+    const custSubs = await prisma.pushSubscription.findMany({
+      where: {
+        OR: [
+          { userId: customerId },
+          { user: { id: customerId } }
+        ]
+      }
+    });
+    if (!custSubs.length) return;
+
+    const payload = {
+      title: `💬 Delivery Partner ${riderName || 'Rider'} (#${order?.orderNumber})`,
+      body: String(messageText || '').slice(0, 120),
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
+      tag: `chat-customer-${order?.id}`,
+      url: `/orders/${order?.orderNumber || order?.id}`,
+      data: {
+        url: `/orders/${order?.orderNumber || order?.id}`,
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        type: 'DELIVERY_CHAT_MESSAGE'
+      }
+    };
+
+    await Promise.allSettled(
+      custSubs.map(sub => sendNotificationToSubscription(sub, payload))
+    );
+  } catch (err) {
+    console.error('Error in notifyCustomerDeliveryChatMessage:', err.message);
+  }
+}
+
