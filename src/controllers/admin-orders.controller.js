@@ -28,10 +28,31 @@ const orderDetailsInclude={
 };
 export const orders={
  list:asyncHandler(async(req,res)=>{
-  const where=req.query.status?{status:normalizeOrderStatus(req.query.status)}:{};
+  const where={};
+  if(req.query.status && req.query.status !== 'All') {
+    where.status = normalizeOrderStatus(req.query.status);
+  }
+  if(req.query.deliveryType && req.query.deliveryType !== 'ALL') {
+    where.deliveryType = String(req.query.deliveryType).trim().toUpperCase();
+  }
+  if(req.query.q && String(req.query.q).trim()) {
+    const q = String(req.query.q).trim();
+    where.OR = [
+      { orderNumber: { contains: q } },
+      { user: { name: { contains: q } } },
+      { user: { mobile: { contains: q } } }
+    ];
+  }
   const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||20));
-  const [rows,total]=await Promise.all([prisma.order.findMany({where,include,orderBy:[{createdAt:'desc'},{id:'asc'}],skip:(page-1)*limit,take:limit}),prisma.order.count({where})]);
-  ok(res,{orders:rows.map(orderDto),pagination:{page,limit,total,pages:Math.max(1,Math.ceil(total/limit))}});
+  const baseStatusWhere = where.status ? { status: where.status } : {};
+  const [rows,total,instantCount,scheduledCount,allCount]=await Promise.all([
+    prisma.order.findMany({where,include,orderBy:[{createdAt:'desc'},{id:'asc'}],skip:(page-1)*limit,take:limit}),
+    prisma.order.count({where}),
+    prisma.order.count({where:{...baseStatusWhere, deliveryType:'INSTANT'}}),
+    prisma.order.count({where:{...baseStatusWhere, deliveryType:'SCHEDULED'}}),
+    prisma.order.count({where:baseStatusWhere})
+  ]);
+  ok(res,{orders:rows.map(orderDto),pagination:{page,limit,total,pages:Math.max(1,Math.ceil(total/limit))},counts:{all:allCount,instant:instantCount,scheduled:scheduledCount}});
  }),
  get:asyncHandler(async(req,res)=>{const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}]},include:orderDetailsInclude});if(!row)throw new AppError('Order not found',404);ok(res,orderDto(row))}),
  status:asyncHandler(async(req,res)=>{

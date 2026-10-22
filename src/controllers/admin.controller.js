@@ -197,7 +197,83 @@ export const delivery={
  status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);ok(res,deliveryView(await prisma.deliveryArea.update({where:{id:req.params.id},data:{status}})),status==='ACTIVE'?'Delivery zone activated':'Delivery zone paused')}),
  remove:asyncHandler(async(req,res)=>{await prisma.deliveryArea.delete({where:{id:req.params.id}});ok(res,null,'Delivery zone permanently deleted')})
 };
-export const support={list:asyncHandler(async(req,res)=>ok(res,await prisma.supportTicket.findMany({include:{user:{select:{id:true,name:true,email:true,mobile:true}},messages:{orderBy:{createdAt:'asc'}}},orderBy:{createdAt:'desc'}}))),reply:asyncHandler(async(req,res)=>{const status=req.body.status?String(req.body.status).toUpperCase():undefined;if(status&&!['OPEN','PENDING','RESOLVED'].includes(status))throw new AppError('Invalid ticket status',422);const message=String(req.body.message||'').trim();const ticket=await prisma.supportTicket.update({where:{id:req.params.id},data:{status,messages:message?{create:{message,isAdmin:true,senderId:req.user.id}}:undefined},include:{messages:true}});ok(res,ticket,'Ticket updated')})};
+export const support={
+ list:asyncHandler(async(req,res)=>{
+  const tickets=await prisma.supportTicket.findMany({
+   include:{
+    user:{
+     select:{
+      id:true,
+      name:true,
+      email:true,
+      mobile:true,
+      addresses:{take:1,select:{mobile:true}}
+     }
+    },
+    messages:{orderBy:{createdAt:'asc'}}
+   },
+   orderBy:{createdAt:'desc'}
+  });
+
+  const orderIds=tickets.map(t=>t.orderId).filter(Boolean);
+  let orderMap=new Map();
+  if(orderIds.length>0){
+   const orders=await prisma.order.findMany({
+    where:{id:{in:orderIds}},
+    select:{id:true,orderNumber:true,addressSnapshot:true}
+   });
+   orders.forEach(o=>orderMap.set(o.id,o));
+  }
+
+  const result=tickets.map(t=>{
+   const order=t.orderId?orderMap.get(t.orderId):null;
+   const orderAddressMobile=order?.addressSnapshot?.mobile||order?.addressSnapshot?.phone||null;
+   const descPhoneMatch=(t.description||'').match(/(?:Contact (?:Phone|Mobile)|Phone|Mobile):\s*([+0-9\s-]{10,15})/i);
+   const descPhone=descPhoneMatch?descPhoneMatch[1].trim():null;
+   const customerPhone=t.user?.mobile||orderAddressMobile||t.user?.addresses?.[0]?.mobile||descPhone||null;
+   return {
+    ...t,
+    customerPhone,
+    orderNumber:order?.orderNumber||null
+   };
+  });
+
+  ok(res,result);
+ }),
+ reply:asyncHandler(async(req,res)=>{
+  const status=req.body.status?String(req.body.status).toUpperCase():undefined;
+  if(status&&!['OPEN','PENDING','RESOLVED'].includes(status))throw new AppError('Invalid ticket status',422);
+  const message=String(req.body.message||'').trim();
+  const ticket=await prisma.supportTicket.update({
+   where:{id:req.params.id},
+   data:{status,messages:message?{create:{message,isAdmin:true,senderId:req.user.id}}:undefined},
+   include:{
+    user:{
+     select:{
+      id:true,
+      name:true,
+      email:true,
+      mobile:true,
+      addresses:{take:1,select:{mobile:true}}
+     }
+    },
+    messages:{orderBy:{createdAt:'asc'}}
+   }
+  });
+
+  let orderNumber=null;
+  const descPhoneMatch=(ticket.description||'').match(/(?:Contact (?:Phone|Mobile)|Phone|Mobile):\s*([+0-9\s-]{10,15})/i);
+  const descPhone=descPhoneMatch?descPhoneMatch[1].trim():null;
+  let customerPhone=ticket.user?.mobile||ticket.user?.addresses?.[0]?.mobile||descPhone||null;
+  if(ticket.orderId){
+   const order=await prisma.order.findUnique({where:{id:ticket.orderId},select:{orderNumber:true,addressSnapshot:true}});
+   orderNumber=order?.orderNumber||null;
+   customerPhone=customerPhone||order?.addressSnapshot?.mobile||order?.addressSnapshot?.phone||null;
+  }
+
+  ok(res,{...ticket,customerPhone,orderNumber},'Ticket updated');
+ })
+};
 export const settings={
  get:asyncHandler(async(req,res)=>ok(res,await prisma.storeSetting.findUnique({where:{id:1}}))),
  save:asyncHandler(async(req,res)=>{
@@ -210,9 +286,10 @@ export const settings={
   const notifications=req.body.notifications&&typeof req.body.notifications==='object'?req.body.notifications:{};
   if(req.body.estimatedDelivery===undefined)req.body.estimatedDelivery=current?.estimatedDelivery;
   const policies=req.body.policies!==undefined?(typeof req.body.policies==='object'&&req.body.policies!==null?req.body.policies:null):(current?.policies||null);
-  const data={storeName:text('storeName','Store name'),logo:String(req.body.logo||'').trim()||null,contactNumber:text('contactNumber','Contact number'),email,address:text('address','Store address'),openingTime,closingTime,currency:String(req.body.currency||'INR').trim().toUpperCase(),minimumOrder:money('minimumOrder','Minimum order'),deliveryFee:money('deliveryFee','Delivery fee'),freeDeliveryThreshold:money('freeDeliveryThreshold','Free delivery threshold'),estimatedDelivery:text('estimatedDelivery','Estimated delivery'),notifications:{orders:Boolean(notifications.orders),stock:Boolean(notifications.stock),customers:Boolean(notifications.customers)},policies};
+  const globalDeliveryRadius=req.body.globalDeliveryRadius!==undefined?Math.max(0.1,Number(req.body.globalDeliveryRadius)||5.0):(current?.globalDeliveryRadius?Number(current.globalDeliveryRadius):5.0);
+  const data={storeName:text('storeName','Store name'),logo:String(req.body.logo||'').trim()||null,contactNumber:text('contactNumber','Contact number'),email,address:text('address','Store address'),openingTime,closingTime,currency:String(req.body.currency||'INR').trim().toUpperCase(),minimumOrder:money('minimumOrder','Minimum order'),deliveryFee:money('deliveryFee','Delivery fee'),freeDeliveryThreshold:money('freeDeliveryThreshold','Free delivery threshold'),estimatedDelivery:text('estimatedDelivery','Estimated delivery'),globalDeliveryRadius,notifications:{orders:Boolean(notifications.orders),stock:Boolean(notifications.stock),customers:Boolean(notifications.customers)},policies};
   const savedSetting = await prisma.storeSetting.upsert({where:{id:1},update:data,create:{id:1,...data}});
-  logAudit(req,{module:'SETTINGS',action:'STORE_SETTINGS_UPDATE',resourceId:'1',resourceName:'Store Settings',details:{storeName:data.storeName,openingTime:data.openingTime,closingTime:data.closingTime,minimumOrder:data.minimumOrder,deliveryFee:data.deliveryFee}});
+  logAudit(req,{module:'SETTINGS',action:'STORE_SETTINGS_UPDATE',resourceId:'1',resourceName:'Store Settings',details:{storeName:data.storeName,openingTime:data.openingTime,closingTime:data.closingTime,minimumOrder:data.minimumOrder,deliveryFee:data.deliveryFee,globalDeliveryRadius:data.globalDeliveryRadius}});
   ok(res,savedSetting,'Store settings saved');
  }),
  emergencyPause:asyncHandler(async(req,res)=>{

@@ -5,23 +5,74 @@ import {productDto,ticketNumber} from '../utils/order.js';
 import {sendContactInquiryEmail} from '../services/mail.service.js';
 import {getAvailableCustomerSlots} from './admin-scheduling.controller.js';
 import {resolveEffectiveStoreSchedule} from '../services/store-operations.service.js';
+import {smartSearchProducts} from '../services/search.service.js';
 export const categories=asyncHandler(async(req,res)=>ok(res,await catalogRepository.categories()));
 export const banners=asyncHandler(async(req,res)=>ok(res,await catalogRepository.banners()));
+export const searchProducts=asyncHandler(async(req,res)=>{
+  const result=await smartSearchProducts({
+    q:req.query.q,
+    category:req.query.category,
+    available:req.query.available==='true',
+    sort:req.query.sort,
+    page:Math.max(1,parseInt(req.query.page,10)||1),
+    limit:Math.min(50,Math.max(1,parseInt(req.query.limit,10)||20)),
+    userId:req.user?.id||null
+  });
+  ok(res,result,'Search completed',{
+    page:result.page,
+    limit:result.limit,
+    total:result.total,
+    pages:result.pages
+  });
+});
 export const products=asyncHandler(async(req,res)=>{
- const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(50,Math.max(1,parseInt(req.query.limit,10)||20));
- const setting=await prisma.storeSetting?.findUnique?.({where:{id:1},select:{autoHideOutOfStock:true}});
- const hideOos=Boolean(setting?.autoHideOutOfStock);
- // Inactive products are available only through authenticated admin endpoints.
- const where={deletedAt:null,status:'ACTIVE',...(req.query.category&&{category:{slug:req.query.category}}),...((req.query.available==='true'||hideOos)&&{stock:{gt:0}}),...(req.query.q&&{name:{contains:req.query.q}})};
- const orderBy=req.query.sort==='low'?{price:'asc'}:req.query.sort==='high'?{price:'desc'}:req.query.sort==='discount'?{featured:'desc'}:{bestSeller:'desc'};
- const include={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
- const [rows,total]=await Promise.all([prisma.product.findMany({where,include,orderBy,skip:(page-1)*limit,take:limit}),prisma.product.count({where})]);
- const groups=[...new Set(rows.map(row=>row.variantGroupId).filter(Boolean))];
- const packs=groups.length?await prisma.product.findMany({where:{deletedAt:null,status:'ACTIVE',variantGroupId:{in:groups}},include,orderBy:{price:'asc'}}):[];
- ok(res,rows.map(row=>({...productDto(row),variants:row.variantGroupId?packs.filter(pack=>pack.variantGroupId===row.variantGroupId).map(productDto):[]})),'Products fetched',{page,limit,total,pages:Math.ceil(total/limit)});
+  const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(50,Math.max(1,parseInt(req.query.limit,10)||20));
+  if(req.query.q){
+    const searchRes=await smartSearchProducts({
+      q:req.query.q,
+      category:req.query.category,
+      available:req.query.available==='true',
+      sort:req.query.sort,
+      page,
+      limit,
+      userId:req.user?.id||null
+    });
+    return ok(res,searchRes.results,'Products fetched',{
+      page:searchRes.page,
+      limit:searchRes.limit,
+      total:searchRes.total,
+      pages:searchRes.pages,
+      scenario:searchRes.scenario,
+      exactProduct:searchRes.exactProduct,
+      similarProducts:searchRes.similarProducts,
+      suggestions:searchRes.suggestions,
+      inStockCount:searchRes.inStockCount,
+      hasAvailable:searchRes.hasAvailable
+    });
+  }
+  const setting=await prisma.storeSetting?.findUnique?.({where:{id:1},select:{autoHideOutOfStock:true}});
+  const hideOos=Boolean(setting?.autoHideOutOfStock);
+  // Inactive products are available only through authenticated admin endpoints.
+  const where={deletedAt:null,status:'ACTIVE',...(req.query.category&&{category:{slug:req.query.category}}),...((req.query.available==='true'||hideOos)&&{stock:{gt:0}})};
+  const orderBy=req.query.sort==='low'?{price:'asc'}:req.query.sort==='high'?{price:'desc'}:req.query.sort==='discount'?{featured:'desc'}:{bestSeller:'desc'};
+  const include={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
+  const [rows,total]=await Promise.all([prisma.product.findMany({where,include,orderBy,skip:(page-1)*limit,take:limit}),prisma.product.count({where})]);
+  const groups=[...new Set(rows.map(row=>row.variantGroupId).filter(Boolean))];
+  const packs=groups.length?await prisma.product.findMany({where:{deletedAt:null,status:'ACTIVE',variantGroupId:{in:groups}},include,orderBy:{price:'asc'}}):[];
+  ok(res,rows.map(row=>({...productDto(row),variants:row.variantGroupId?packs.filter(pack=>pack.variantGroupId===row.variantGroupId).map(productDto):[]})),'Products fetched',{page,limit,total,pages:Math.ceil(total/limit)});
 });
 export const product=asyncHandler(async(req,res)=>{const row=await catalogRepository.product(req.params.id);if(!row)throw new AppError('Product not found',404);ok(res,productDto(row))});
-export const suggestions=asyncHandler(async(req,res)=>{const q=String(req.query.q||'');const rows=await prisma.product.findMany({where:{name:{contains:q},status:'ACTIVE',deletedAt:null},select:{id:true,name:true},take:8});if(req.user&&q)await prisma.searchHistory.create({data:{userId:req.user.id,query:q}});ok(res,rows)});
+export const suggestions=asyncHandler(async(req,res)=>{
+  const q=String(req.query.q||'').trim();
+  if(!q)return ok(res,[]);
+  const rows=await prisma.product.findMany({
+    where:{name:{contains:q},status:'ACTIVE',deletedAt:null},
+    select:{id:true,name:true,unit:true,price:true,stock:true,images:{take:1,select:{url:true}}},
+    take:8
+  });
+  if(req.user&&q)await prisma.searchHistory.create({data:{userId:req.user.id,query:q}}).catch(()=>{});
+  ok(res,rows.map(r=>({id:r.id,name:r.name,unit:r.unit,price:Number(r.price),stock:r.stock,image:r.images?.[0]?.url||null})));
+});
 export const delivery=asyncHandler(async(req,res)=>{
   const [areas,villages,settings]=await Promise.all([
     prisma.deliveryArea.findMany({where:{status:'ACTIVE'}}),
@@ -93,6 +144,7 @@ export const settings=asyncHandler(async(req,res)=>{
 export const contactInquiry=asyncHandler(async(req,res)=>{
  const name=String(req.body.name||'').trim();
  const email=String(req.body.email||'').trim().toLowerCase();
+ const phone=String(req.body.phone||req.body.mobile||'').trim();
  const subject=String(req.body.subject||'').trim();
  const message=String(req.body.message||'').trim();
 
@@ -107,9 +159,15 @@ export const contactInquiry=asyncHandler(async(req,res)=>{
    data:{
     name,
     email,
+    mobile:phone||null,
     role:'CUSTOMER',
     status:'ACTIVE'
    }
+  });
+ }else if(phone&&!user.mobile){
+  user=await prisma.user.update({
+   where:{id:user.id},
+   data:{mobile:phone}
   });
  }
 
@@ -119,7 +177,7 @@ export const contactInquiry=asyncHandler(async(req,res)=>{
    userId:user.id,
    issueType:'Contact Inquiry',
    subject:`[Contact Us] ${subject}`,
-   description:`Inquiry from ${name} (${email}):\n\n${message}`,
+   description:phone?`Inquiry from ${name} (${email}, Contact Phone: ${phone}):\n\n${message}`:`Inquiry from ${name} (${email}):\n\n${message}`,
    status:'OPEN',
    messages:{
     create:{

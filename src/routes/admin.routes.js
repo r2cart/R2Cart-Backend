@@ -6,7 +6,7 @@ import * as productImport from '../controllers/product-import.controller.js';
 import { dashboard } from '../controllers/dashboard.controller.js';
 import * as adminProducts from '../controllers/admin-products.controller.js';
 import { orders } from '../controllers/admin-orders.controller.js';
-import { customers, setCustomerStatus } from '../controllers/admin-customers.controller.js';
+import { customers, setCustomerStatus, deleteCustomer } from '../controllers/admin-customers.controller.js';
 import { reorder } from '../controllers/admin-reorder.controller.js';
 import * as navbar from '../controllers/admin-navbar.controller.js';
 import * as support from '../controllers/admin-support.controller.js';
@@ -120,6 +120,7 @@ adminRouter.patch('/orders/:id/items/:itemId', authorizePermission('orders.updat
 // ==========================================
 adminRouter.get('/customers', authorizePermission('customers.view_limited'), customers);
 adminRouter.patch('/customers/:id/status', authorizePermission('customers.view_limited'), setCustomerStatus);
+adminRouter.delete('/customers/:id', deleteCustomer);
 
 // ==========================================
 // 5. DELIVERY HUB & ASSIGNMENTS

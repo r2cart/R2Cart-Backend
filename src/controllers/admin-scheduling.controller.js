@@ -83,8 +83,41 @@ export const scheduling = {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(closingTime)) throw new AppError('Invalid closing time format (HH:MM)', 422);
       data.closingTime = closingTime;
     }
+
+    const existing = await prisma.storeSetting.findUnique({
+      where: { id: 1 },
+      select: { openingTime: true, closingTime: true, weekdayHours: true }
+    });
+    const effectiveOpen = openingTime || existing?.openingTime || '06:00';
+    const effectiveClose = closingTime || existing?.closingTime || '19:00';
+
     if (weekdayHours && typeof weekdayHours === 'object') {
-      data.weekdayHours = weekdayHours;
+      const normalizedWeekdays = { ...weekdayHours };
+      for (const day of ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']) {
+        if (normalizedWeekdays[day]) {
+          if (!normalizedWeekdays[day].isCustom) {
+            normalizedWeekdays[day].open = effectiveOpen;
+            normalizedWeekdays[day].close = effectiveClose;
+          }
+        } else {
+          normalizedWeekdays[day] = {
+            open: effectiveOpen,
+            close: effectiveClose,
+            isOpen: true,
+            isCustom: false
+          };
+        }
+      }
+      data.weekdayHours = normalizedWeekdays;
+    } else if (openingTime || closingTime) {
+      const existingWeekdays = (typeof existing?.weekdayHours === 'object' && existing?.weekdayHours) ? { ...existing.weekdayHours } : {};
+      for (const day of ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']) {
+        if (existingWeekdays[day] && !existingWeekdays[day].isCustom) {
+          existingWeekdays[day].open = effectiveOpen;
+          existingWeekdays[day].close = effectiveClose;
+        }
+      }
+      data.weekdayHours = existingWeekdays;
     }
     if (prepTimeMinutes !== undefined) {
       const prep = Number(prepTimeMinutes);
@@ -108,6 +141,12 @@ export const scheduling = {
       where: { id: 1 },
       data
     });
+
+    if (data.sameDayCutoffMinutes !== undefined) {
+      await prisma.deliverySlot.updateMany({
+        data: { cutoffMinutes: data.sameDayCutoffMinutes }
+      });
+    }
 
     logAudit(req, {
       module: 'OPERATIONS',
@@ -350,6 +389,17 @@ export const scheduling = {
       const cutoffMinutes = Math.max(0, parseInt(req.body.cutoffMinutes, 10) || 60);
       const position = Number(req.body.position || 0);
 
+      // Keep cutoff common across storeSetting and all delivery slots
+      if (req.body.cutoffMinutes !== undefined) {
+        await prisma.storeSetting.update({
+          where: { id: 1 },
+          data: { sameDayCutoffMinutes: cutoffMinutes }
+        });
+        await prisma.deliverySlot.updateMany({
+          data: { cutoffMinutes }
+        });
+      }
+
       const slot = await prisma.deliverySlot.create({
         data: {
           label,
@@ -383,7 +433,17 @@ export const scheduling = {
       if (req.body.startTime) data.startTime = String(req.body.startTime).trim();
       if (req.body.endTime) data.endTime = String(req.body.endTime).trim();
       if (req.body.maxOrders !== undefined) data.maxOrders = Math.max(1, parseInt(req.body.maxOrders, 10));
-      if (req.body.cutoffMinutes !== undefined) data.cutoffMinutes = Math.max(0, parseInt(req.body.cutoffMinutes, 10));
+      if (req.body.cutoffMinutes !== undefined) {
+        data.cutoffMinutes = Math.max(0, parseInt(req.body.cutoffMinutes, 10));
+        // Keep cutoff common across storeSetting and all delivery slots
+        await prisma.storeSetting.update({
+          where: { id: 1 },
+          data: { sameDayCutoffMinutes: data.cutoffMinutes }
+        });
+        await prisma.deliverySlot.updateMany({
+          data: { cutoffMinutes: data.cutoffMinutes }
+        });
+      }
       if (req.body.position !== undefined) data.position = Number(req.body.position);
       if (req.body.status) data.status = req.body.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE';
       if (req.body.daysOfWeek !== undefined) data.daysOfWeek = Array.isArray(req.body.daysOfWeek) ? req.body.daysOfWeek : null;
@@ -482,7 +542,17 @@ export const scheduling = {
 
 // Customer facing slot resolver: calculates availability, cutoffs, and remaining capacities
 export async function getAvailableCustomerSlots(targetDateStr) {
-  const now = new Date();
+  const [setting, now] = await Promise.all([
+    prisma.storeSetting.findUnique({
+      where: { id: 1 },
+      select: { sameDayCutoffMinutes: true, advanceBookingDays: true }
+    }),
+    new Date()
+  ]);
+
+  const advanceBookingDays = Math.max(1, setting?.advanceBookingDays || 4);
+  const globalCutoff = setting?.sameDayCutoffMinutes ?? 60;
+
   // Format current time in Asia/Kolkata
   const kolkataNowStr = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -499,6 +569,17 @@ export async function getAvailableCustomerSlots(targetDateStr) {
   const todayYmd = `${year}-${month}-${day}`;
   const isToday = !targetDateStr || targetDateStr === todayYmd;
 
+  // Check advance booking window
+  let isOutOfWindow = false;
+  if (targetDateStr && targetDateStr !== todayYmd) {
+    const [tY, tM, tD] = todayYmd.split('-').map(Number);
+    const [dY, dM, dD] = targetDateStr.split('-').map(Number);
+    const diffDays = Math.round((new Date(dY, dM - 1, dD) - new Date(tY, tM - 1, tD)) / 86400000);
+    if (diffDays < 0 || diffDays >= advanceBookingDays) {
+      isOutOfWindow = true;
+    }
+  }
+
   const currentMinutes = parseInt(timePart.split(':')[0], 10) * 60 + parseInt(timePart.split(':')[1], 10);
 
   let slots = await prisma.deliverySlot.findMany({
@@ -508,11 +589,11 @@ export async function getAvailableCustomerSlots(targetDateStr) {
 
   if (slots.length === 0) {
     const defaultSlots = [
-      { label: 'Morning Slot (07:00 AM - 10:00 AM)', startTime: '07:00', endTime: '10:00', maxOrders: 20, cutoffMinutes: 60, position: 1 },
-      { label: 'Midday Slot (10:00 AM - 01:00 PM)', startTime: '10:00', endTime: '13:00', maxOrders: 25, cutoffMinutes: 60, position: 2 },
-      { label: 'Afternoon Slot (01:00 PM - 04:00 PM)', startTime: '13:00', endTime: '16:00', maxOrders: 25, cutoffMinutes: 60, position: 3 },
-      { label: 'Evening Slot (04:00 PM - 07:00 PM)', startTime: '16:00', endTime: '19:00', maxOrders: 30, cutoffMinutes: 60, position: 4 },
-      { label: 'Night Slot (07:00 PM - 10:00 PM)', startTime: '19:00', endTime: '22:00', maxOrders: 20, cutoffMinutes: 60, position: 5 }
+      { label: 'Morning Slot (07:00 AM - 10:00 AM)', startTime: '07:00', endTime: '10:00', maxOrders: 20, cutoffMinutes: globalCutoff, position: 1 },
+      { label: 'Midday Slot (10:00 AM - 01:00 PM)', startTime: '10:00', endTime: '13:00', maxOrders: 25, cutoffMinutes: globalCutoff, position: 2 },
+      { label: 'Afternoon Slot (01:00 PM - 04:00 PM)', startTime: '13:00', endTime: '16:00', maxOrders: 25, cutoffMinutes: globalCutoff, position: 3 },
+      { label: 'Evening Slot (04:00 PM - 07:00 PM)', startTime: '16:00', endTime: '19:00', maxOrders: 30, cutoffMinutes: globalCutoff, position: 4 },
+      { label: 'Night Slot (07:00 PM - 10:00 PM)', startTime: '19:00', endTime: '22:00', maxOrders: 20, cutoffMinutes: globalCutoff, position: 5 }
     ];
     for (const d of defaultSlots) {
       await prisma.deliverySlot.create({ data: d }).catch(() => {});
@@ -535,16 +616,18 @@ export async function getAvailableCustomerSlots(targetDateStr) {
   const bookedMap = Object.fromEntries(bookedCounts.map(b => [b.deliverySlot, b._count.id]));
 
   return slots.map(slot => {
-    const [startH, startM] = slot.startTime.split(':').map(Number);
-    const slotStartMinutes = startH * 60 + startM;
-    const cutoffThreshold = slotStartMinutes - slot.cutoffMinutes;
+    const [endH, endM] = (slot.endTime || '23:59').split(':').map(Number);
+    const slotEndMinutes = endH * 60 + (endM || 0);
+    const effectiveCutoff = (slot.cutoffMinutes !== null && slot.cutoffMinutes !== undefined) ? slot.cutoffMinutes : globalCutoff;
+    // Customer can order during slot window until N minutes before slot ENDS (e.g. 1 hour before 10:00 = 09:00 cutoff)
+    const cutoffThreshold = slotEndMinutes - effectiveCutoff;
 
     const isCutoffPassed = isToday && currentMinutes >= cutoffThreshold;
     const booked = bookedMap[slot.label] || 0;
     const remaining = Math.max(0, slot.maxOrders - booked);
     const isFull = remaining <= 0;
 
-    const isAvailable = !isCutoffPassed && !isFull;
+    const isAvailable = !isOutOfWindow && !isCutoffPassed && !isFull;
 
     return {
       id: slot.id,
@@ -552,9 +635,11 @@ export async function getAvailableCustomerSlots(targetDateStr) {
       startTime: slot.startTime,
       endTime: slot.endTime,
       maxOrders: slot.maxOrders,
+      cutoffMinutes: effectiveCutoff,
       bookedOrders: booked,
       remainingOrders: remaining,
       isCutoffPassed,
+      isOutOfWindow,
       isFull,
       isAvailable
     };

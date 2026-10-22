@@ -148,9 +148,9 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
 
   // Determine Effective Hours and Responsible Rule
   let ruleSource = 'GLOBAL_DEFAULT';
-  let ruleDetails = 'Store default hours (07:00 AM – 09:00 PM)';
   let effectiveOpenStr = globalDefault.openingTime;
   let effectiveCloseStr = globalDefault.closingTime;
+  let ruleDetails = `Store default hours (${minutesToTimeString(timeStringToMinutes(effectiveOpenStr))} – ${minutesToTimeString(timeStringToMinutes(effectiveCloseStr))})`;
   let isStoreClosedDay = false;
   let closedReason = null;
 
@@ -189,14 +189,22 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
     effectiveOpenStr = activeSeasonMatch.openingTime || effectiveOpenStr;
     effectiveCloseStr = activeSeasonMatch.closingTime || effectiveCloseStr;
   } else if (currentDayConfig) {
-    ruleSource = 'WEEKLY';
-    ruleDetails = `Regular weekly schedule for ${weekday.toUpperCase()}`;
     if (currentDayConfig.isOpen === false) {
       isStoreClosedDay = true;
       closedReason = `Store closed on ${weekday.charAt(0).toUpperCase() + weekday.slice(1)}s`;
-    } else {
+      ruleSource = 'WEEKLY';
+      ruleDetails = closedReason;
+    } else if (currentDayConfig.isCustom) {
+      ruleSource = 'WEEKLY';
+      ruleDetails = `Custom weekly schedule for ${weekday.toUpperCase()}`;
       effectiveOpenStr = currentDayConfig.open || effectiveOpenStr;
       effectiveCloseStr = currentDayConfig.close || effectiveCloseStr;
+    } else {
+      // Non-custom day: use global default daily operating hours
+      ruleSource = 'GLOBAL_DEFAULT';
+      ruleDetails = `Store default hours (${minutesToTimeString(timeStringToMinutes(globalDefault.openingTime))} – ${minutesToTimeString(timeStringToMinutes(globalDefault.closingTime))})`;
+      effectiveOpenStr = globalDefault.openingTime;
+      effectiveCloseStr = globalDefault.closingTime;
     }
   }
 
@@ -208,10 +216,19 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
   let allowImmediateOrders = true;
   let allowScheduledOrders = globalDefault.isSchedulingEnabled;
   let statusReason = 'Store is currently open for business.';
+
+  let nextOpenDateStr = evalDateStr;
+  let nextOpenTimeStr = effectiveOpenStr;
+  if (evalTimeMinutes >= effectiveCloseMinutes) {
+    const [y, m, d] = evalDateStr.split('-').map(Number);
+    const tmrw = new Date(Date.UTC(y, m - 1, d + 1, 6, 0, 0));
+    const tmrwKolkata = getKolkataDateTime(tmrw);
+    nextOpenDateStr = tmrwKolkata.dateStr;
+  }
   const nextAvailableOpening = {
-    date: evalDateStr,
-    time: effectiveOpenStr,
-    label: `${evalDateStr} at ${minutesToTimeString(effectiveOpenMinutes)}`
+    date: nextOpenDateStr,
+    time: nextOpenTimeStr,
+    label: `${nextOpenDateStr === evalDateStr ? 'Today' : 'Tomorrow'} at ${minutesToTimeString(timeStringToMinutes(nextOpenTimeStr))}`
   };
 
   // Evaluate Emergency Overrides (Priority 1)
@@ -256,7 +273,7 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
         storeStatus = 'SCHEDULED_ONLY';
         allowImmediateOrders = false;
         allowScheduledOrders = true;
-        statusReason = 'Store is currently closed. You can schedule your order for the next available delivery slot.';
+        statusReason = 'Store is currently closed for instant delivery. You can schedule your order for the next available delivery slot.';
       } else {
         storeStatus = 'CLOSED';
         allowImmediateOrders = false;

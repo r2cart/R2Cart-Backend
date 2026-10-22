@@ -47,6 +47,19 @@ export const checkout=asyncHandler(async(req,res)=>{
     }
     if(!deliveryDate||!deliverySlot)throw new AppError('Delivery date and time slot are required for scheduled delivery',422);
     
+    // Validate that deliveryDate is within advance booking window
+    const storeSetting = await prisma.storeSetting.findUnique({ where: { id: 1 }, select: { advanceBookingDays: true } });
+    const maxAdvance = Math.max(1, storeSetting?.advanceBookingDays || 4);
+    const kolkataNow = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const [curD, curM, curY] = kolkataNow.split('/');
+    const todayYmd = `${curY}-${curM}-${curD}`;
+    const [tY, tM, tD] = todayYmd.split('-').map(Number);
+    const [dY, dM, dD] = deliveryDate.split('-').map(Number);
+    const diffDays = Math.round((new Date(dY, dM - 1, dD) - new Date(tY, tM - 1, tD)) / 86400000);
+    if (diffDays < 0 || diffDays >= maxAdvance) {
+      throw new AppError(`Delivery date is outside the allowed booking window (Max ${maxAdvance} days in advance)`, 422);
+    }
+
     // Check if target scheduled date is a store closure / holiday
     const targetSchedule=await resolveEffectiveStoreSchedule({targetDateStr:deliveryDate});
     if(targetSchedule.effectiveHours.isClosedDay){
@@ -56,8 +69,10 @@ export const checkout=asyncHandler(async(req,res)=>{
     const slots=await getAvailableCustomerSlots(deliveryDate);
     const matched=slots.find(s=>s.label===deliverySlot||s.id===deliverySlot);
     if(!matched)throw new AppError('The selected delivery slot is not active',422);
+    if(matched.isOutOfWindow)throw new AppError(`The selected delivery date is outside the advance booking window`,422);
     if(matched.isCutoffPassed)throw new AppError(`The cutoff time for "${matched.label}" has passed for today`,422);
     if(matched.isFull)throw new AppError(`The slot "${matched.label}" is fully booked (${matched.maxOrders} orders max). Please choose another slot.`,422);
+    if(!matched.isAvailable)throw new AppError(`The slot "${matched.label}" is not available`,422);
   }
 
   const address=await prisma.address.findFirst({where:{id:addressId,userId:req.user.id}});
@@ -325,4 +340,35 @@ export const orders={
     });
   })
 };
-export const support={list:asyncHandler(async(req,res)=>ok(res,await prisma.supportTicket.findMany({where:{userId:req.user.id},include:{messages:{orderBy:{createdAt:'asc'}}},orderBy:{createdAt:'desc'}}))),create:asyncHandler(async(req,res)=>{if(req.body.orderId){const order=await prisma.order.findFirst({where:{id:req.body.orderId,userId:req.user.id},select:{id:true}});if(!order)throw new AppError('Related order not found',404)}const ticket=await prisma.supportTicket.create({data:{ticketNumber:ticketNumber(),userId:req.user.id,orderId:req.body.orderId||null,issueType:req.body.issueType,subject:req.body.subject,description:req.body.description}});let emailNotificationSent=false;try{emailNotificationSent=await sendSupportTicketEmail({...ticket,customer:req.user})}catch(error){console.error(`Support notification failed for ${ticket.ticketNumber}:`,error.message)}created(res,{...ticket,emailNotificationSent},'Ticket submitted')})};
+export const support={
+ list:asyncHandler(async(req,res)=>ok(res,await prisma.supportTicket.findMany({where:{userId:req.user.id},include:{messages:{orderBy:{createdAt:'asc'}}},orderBy:{createdAt:'desc'}}))),
+ create:asyncHandler(async(req,res)=>{
+  if(req.body.orderId){
+   const order=await prisma.order.findFirst({where:{id:req.body.orderId,userId:req.user.id},select:{id:true}});
+   if(!order)throw new AppError('Related order not found',404);
+  }
+  const mobile=String(req.body.mobile||req.body.phone||'').trim();
+  if(mobile&&!req.user.mobile){
+   await prisma.user.update({where:{id:req.user.id},data:{mobile}}).catch(()=>{});
+  }
+  const desc=String(req.body.description||'').trim();
+  const description=mobile?`${desc}\n\n[Contact Mobile: ${mobile}]`:desc;
+  const ticket=await prisma.supportTicket.create({
+   data:{
+    ticketNumber:ticketNumber(),
+    userId:req.user.id,
+    orderId:req.body.orderId||null,
+    issueType:req.body.issueType,
+    subject:req.body.subject,
+    description
+   }
+  });
+  let emailNotificationSent=false;
+  try{
+   emailNotificationSent=await sendSupportTicketEmail({...ticket,customer:req.user});
+  }catch(error){
+   console.error(`Support notification failed for ${ticket.ticketNumber}:`,error.message);
+  }
+  created(res,{...ticket,emailNotificationSent},'Ticket submitted');
+ })
+};
