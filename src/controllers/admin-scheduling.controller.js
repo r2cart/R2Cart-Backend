@@ -241,7 +241,7 @@ export const scheduling = {
     }),
 
     save: asyncHandler(async (req, res) => {
-      const { id, date, name, openingTime, closingTime, isClosed = false, reason } = req.body;
+      const { id, date, name, openingTime, closingTime, isClosed = false, reason, status = 'ACTIVE' } = req.body;
       if (!date) throw new AppError('Date is required (YYYY-MM-DD)', 422);
 
       const setting = await prisma.storeSetting.findUnique({ where: { id: 1 }, select: { specialDaySchedules: true } });
@@ -255,6 +255,7 @@ export const scheduling = {
         openingTime: openingTime || '07:00',
         closingTime: closingTime || '21:00',
         isClosed: Boolean(isClosed),
+        status: status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
         reason: reason ? reason.trim() : null,
         updatedAt: new Date().toISOString()
       };
@@ -569,6 +570,10 @@ export async function getAvailableCustomerSlots(targetDateStr) {
   const todayYmd = `${year}-${month}-${day}`;
   const isToday = !targetDateStr || targetDateStr === todayYmd;
 
+  // Check store operations & emergency restrictions
+  const storeSchedule = await resolveEffectiveStoreSchedule();
+  const isSchedulingBlocked = !storeSchedule.allowScheduledOrders || storeSchedule.storeStatus === 'EMERGENCY_PAUSED';
+
   // Check advance booking window
   let isOutOfWindow = false;
   if (targetDateStr && targetDateStr !== todayYmd) {
@@ -627,7 +632,7 @@ export async function getAvailableCustomerSlots(targetDateStr) {
     const remaining = Math.max(0, slot.maxOrders - booked);
     const isFull = remaining <= 0;
 
-    const isAvailable = !isOutOfWindow && !isCutoffPassed && !isFull;
+    const isAvailable = !isSchedulingBlocked && !isOutOfWindow && !isCutoffPassed && !isFull;
 
     return {
       id: slot.id,
@@ -641,6 +646,7 @@ export async function getAvailableCustomerSlots(targetDateStr) {
       isCutoffPassed,
       isOutOfWindow,
       isFull,
+      isSchedulingBlocked,
       isAvailable
     };
   });

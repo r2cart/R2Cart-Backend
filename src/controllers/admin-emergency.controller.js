@@ -12,19 +12,64 @@ export const emergency = {
       select: { emergencySettings: true, isOrderPaused: true, orderPauseMessage: true }
     });
 
-    const villages = await prisma.deliveryVillage.findMany({
-      where: { status: 'ACTIVE' },
-      select: { id: true, name: true, isPaused: true, notes: true }
-    });
+    const [villages, areas] = await Promise.all([
+      prisma.deliveryVillage.findMany({
+        where: { status: 'ACTIVE' },
+        select: { id: true, name: true, isPaused: true, notes: true }
+      }),
+      prisma.deliveryArea.findMany({
+        where: { status: 'ACTIVE' },
+        select: { id: true, name: true, pincodes: true, isPaused: true }
+      })
+    ]);
 
     const activeEmergency = schedule.isEmergencyActive ? schedule.emergencyDetails : null;
+    const affectedSet = new Set(
+      (activeEmergency?.type === 'SELECTED_AREAS' && Array.isArray(activeEmergency?.affectedVillageIds)
+        ? activeEmergency.affectedVillageIds
+        : []
+      ).map(x => String(x).trim().toLowerCase())
+    );
+
+    const combinedVillages = [
+      ...villages.map(v => {
+        const isSuspended = affectedSet.has(String(v.id).toLowerCase()) || affectedSet.has(String(v.name).toLowerCase());
+        return {
+          id: v.id,
+          name: v.name,
+          isPaused: Boolean(v.isPaused || isSuspended),
+          isVillageOverride: true
+        };
+      })
+    ];
+    const seenNames = new Set(combinedVillages.map(v => v.name.toLowerCase()));
+
+    areas.forEach(a => {
+      const locs = Array.isArray(a.pincodes) ? a.pincodes : [];
+      locs.forEach(loc => {
+        const clean = String(loc || '').trim();
+        if (clean && !seenNames.has(clean.toLowerCase())) {
+          seenNames.add(clean.toLowerCase());
+          const isSuspended = affectedSet.has(clean.toLowerCase());
+          combinedVillages.push({
+            id: clean,
+            name: clean,
+            isPaused: Boolean(a.isPaused || isSuspended),
+            isVillageOverride: false,
+            zoneName: a.name
+          });
+        }
+      });
+    });
+
+    combinedVillages.sort((a, b) => a.name.localeCompare(b.name));
 
     ok(res, {
       isActive: schedule.isEmergencyActive,
       emergency: activeEmergency,
       storeStatus: schedule.status,
       statusReason: schedule.statusReason,
-      villages
+      villages: combinedVillages
     });
   }),
 
@@ -46,9 +91,32 @@ export const emergency = {
       throw new AppError(`Invalid emergency type. Must be one of: ${validTypes.join(', ')}`, 422);
     }
 
-    const defaultMsg = message?.trim() || `Store orders temporarily paused due to ${customReason || reason.replace(/_/g, ' ').toLowerCase()}.`;
+    const defaultMsg = message?.trim() || `Store deliveries are temporarily paused due to ${customReason || reason.replace(/_/g, ' ').toLowerCase()}.`;
     const start = startTime ? new Date(startTime) : new Date();
     const end = endTime ? new Date(endTime) : null;
+
+    // Resolve both IDs and Names for all selected villages/areas
+    const [allVillagesInDb, allAreasInDb] = await Promise.all([
+      prisma.deliveryVillage.findMany({ select: { id: true, name: true } }),
+      prisma.deliveryArea.findMany({ select: { id: true, name: true, pincodes: true } })
+    ]);
+    const normalizedAffected = new Set();
+    (Array.isArray(affectedVillageIds) ? affectedVillageIds : []).forEach(item => {
+      const str = String(item).trim();
+      if (!str) return;
+      normalizedAffected.add(str);
+      const vMatch = allVillagesInDb.find(v => v.id === str || v.name.toLowerCase() === str.toLowerCase());
+      if (vMatch) {
+        normalizedAffected.add(vMatch.id);
+        normalizedAffected.add(vMatch.name);
+      }
+      const aMatch = allAreasInDb.find(a => a.id === str || a.name.toLowerCase() === str.toLowerCase() || (Array.isArray(a.pincodes) && a.pincodes.some(p => String(p).toLowerCase() === str.toLowerCase())));
+      if (aMatch && (aMatch.id === str || aMatch.name.toLowerCase() === str.toLowerCase())) {
+        normalizedAffected.add(aMatch.id);
+        normalizedAffected.add(aMatch.name);
+      }
+    });
+    const finalAffectedVillageIds = Array.from(normalizedAffected);
 
     const current = await prisma.storeSetting.findUnique({ where: { id: 1 } });
     const existingPolicies = current?.policies && typeof current.policies === 'object' ? current.policies : {};
@@ -59,7 +127,7 @@ export const emergency = {
       reason,
       customReason: customReason ? String(customReason).trim() : null,
       message: defaultMsg,
-      affectedVillageIds: Array.isArray(affectedVillageIds) ? affectedVillageIds : [],
+      affectedVillageIds: type === 'SELECTED_AREAS' ? finalAffectedVillageIds : [],
       startTime: start.toISOString(),
       endTime: end ? end.toISOString() : null,
       autoExpire: Boolean(autoExpire),
@@ -88,6 +156,22 @@ export const emergency = {
       }
     });
 
+    // If SELECTED_AREAS, also mark matching deliveryVillage records as paused
+    if (type === 'SELECTED_AREAS' && finalAffectedVillageIds.length > 0) {
+      await prisma.deliveryVillage.updateMany({
+        where: {
+          OR: [
+            { id: { in: finalAffectedVillageIds } },
+            { name: { in: finalAffectedVillageIds } }
+          ]
+        },
+        data: {
+          isPaused: true,
+          notes: defaultMsg
+        }
+      }).catch(() => {});
+    }
+
     // Record in EmergencyLog
     await prisma.emergencyLog.create({
       data: {
@@ -96,7 +180,7 @@ export const emergency = {
         reason,
         customReason: customReason || null,
         message: defaultMsg,
-        affectedAreas: affectedVillageIds,
+        affectedAreas: finalAffectedVillageIds,
         startTime: start,
         endTime: end,
         adminId: req.user?.id || null,
@@ -149,6 +233,12 @@ export const emergency = {
         }
       }
     });
+
+    // Unpause any paused delivery villages
+    await prisma.deliveryVillage.updateMany({
+      where: { isPaused: true },
+      data: { isPaused: false }
+    }).catch(() => {});
 
     await prisma.emergencyLog.create({
       data: {

@@ -57,18 +57,21 @@ export function minutesToTimeString(minutes) {
  * 4. Weekly operating schedule
  * 5. Global default schedule
  */
-export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeStr, prismaClient = prisma } = {}) {
+export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeStr, prismaClient = prisma, settings: inputSettings } = {}) {
   const currentNow = new Date();
   const currentKolkata = getKolkataDateTime(currentNow);
 
-  const evalDateStr = targetDateStr || currentKolkata.ymd;
-  const isTargetingFuture = targetDateStr && targetDateStr !== currentKolkata.ymd;
+  const cleanDateStr = targetDateStr && targetDateStr !== 'undefined' ? targetDateStr : null;
+  const cleanTimeStr = targetTimeStr && targetTimeStr !== 'undefined' ? targetTimeStr : null;
+
+  const evalDateStr = cleanDateStr || currentKolkata.ymd;
+  const isTargetingFuture = Boolean(cleanDateStr && cleanDateStr !== currentKolkata.ymd);
 
   let evalTimeMinutes = currentKolkata.totalMinutes;
   let evalTimeStr = currentKolkata.time;
-  if (targetTimeStr) {
-    evalTimeMinutes = timeStringToMinutes(targetTimeStr);
-    evalTimeStr = targetTimeStr;
+  if (cleanTimeStr) {
+    evalTimeMinutes = timeStringToMinutes(cleanTimeStr);
+    evalTimeStr = cleanTimeStr;
   }
 
   // Calculate day of week for evalDateStr
@@ -76,9 +79,9 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
   const targetDateObj = new Date(y, m - 1, d, 12, 0, 0);
   const weekday = targetDateObj.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
 
-  const settings = await prismaClient.storeSetting.findUnique({
+  const settings = inputSettings || (await prismaClient.storeSetting.findUnique({
     where: { id: 1 }
-  });
+  }));
 
   const globalDefault = {
     openingTime: settings?.openingTime || '07:00',
@@ -96,17 +99,18 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
     try { emergency = JSON.parse(emergency); } catch { emergency = null; }
   }
 
-  // Also check legacy policies.emergencyPause
+  // Also check legacy policies.emergencyPause and settings.isOrderPaused
   const legacyPause = settings?.policies?.emergencyPause;
-  if (!emergency && legacyPause?.isPaused) {
+  const hasLegacyPause = Boolean(settings?.isOrderPaused || legacyPause?.isPaused);
+  if ((!emergency || !emergency.isActive) && hasLegacyPause) {
     emergency = {
       isActive: true,
       type: 'ALL_ORDERS',
-      reason: legacyPause.reason || 'HIGH_VOLUME',
-      message: legacyPause.message || 'Store orders are temporarily paused.',
-      startTime: legacyPause.pausedAt || null,
-      endTime: legacyPause.resumesAt || null,
-      autoExpire: true,
+      reason: legacyPause?.reason || 'HIGH_VOLUME',
+      message: legacyPause?.message || settings?.orderPauseMessage || 'Store orders are temporarily paused.',
+      startTime: legacyPause?.pausedAt || null,
+      endTime: legacyPause?.resumesAt || null,
+      autoExpire: Boolean(legacyPause?.resumesAt),
       affectedVillageIds: []
     };
   }
@@ -219,16 +223,69 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
 
   let nextOpenDateStr = evalDateStr;
   let nextOpenTimeStr = effectiveOpenStr;
-  if (evalTimeMinutes >= effectiveCloseMinutes) {
-    const [y, m, d] = evalDateStr.split('-').map(Number);
-    const tmrw = new Date(Date.UTC(y, m - 1, d + 1, 6, 0, 0));
-    const tmrwKolkata = getKolkataDateTime(tmrw);
-    nextOpenDateStr = tmrwKolkata.dateStr;
+  let nextOpenLabel = `Today at ${minutesToTimeString(timeStringToMinutes(effectiveOpenStr))}`;
+
+  // If store is closed today, or already past opening time today, next scheduled opening is tomorrow or future:
+  if (isStoreClosedDay || evalTimeMinutes >= effectiveOpenMinutes) {
+    let foundOpen = false;
+    for (let offset = 1; offset <= 7; offset++) {
+      const [y, m, d] = evalDateStr.split('-').map(Number);
+      const futureDateObj = new Date(Date.UTC(y, m - 1, d + offset, 12, 0, 0));
+      const futureYMD = `${futureDateObj.getUTCFullYear()}-${String(futureDateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(futureDateObj.getUTCDate()).padStart(2, '0')}`;
+      const futureWeekday = futureDateObj.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+
+      // 1. Check if future date is a holiday
+      const isFutHoliday = holidays.some(h => (typeof h === 'string' ? h === futureYMD : h.date === futureYMD));
+      if (isFutHoliday) continue;
+
+      // 2. Check if future date is a special day
+      const futSpecial = specialDays.find(s => s.date === futureYMD && s.status !== 'INACTIVE' && s.isActive !== false);
+      if (futSpecial && futSpecial.isClosed) continue;
+
+      // 3. Check if future weekday is closed
+      const futWeekdayConfig = weekdayHours[futureWeekday];
+      if (futWeekdayConfig && futWeekdayConfig.isOpen === false) continue;
+
+      // Found the next open day!
+      foundOpen = true;
+      nextOpenDateStr = futureYMD;
+
+      if (futSpecial && futSpecial.openingTime) {
+        nextOpenTimeStr = futSpecial.openingTime;
+      } else {
+        const futSeason = seasons.find(s =>
+          (s.status === 'ACTIVE' || s.isActive === true || (!s.status && s.isActive !== false)) &&
+          s.startDate && s.endDate && futureYMD >= s.startDate && futureYMD <= s.endDate
+        );
+        if (futSeason && futSeason.openingTime) {
+          nextOpenTimeStr = futSeason.openingTime;
+        } else if (futWeekdayConfig && futWeekdayConfig.isCustom && futWeekdayConfig.open) {
+          nextOpenTimeStr = futWeekdayConfig.open;
+        } else {
+          nextOpenTimeStr = globalDefault.openingTime;
+        }
+      }
+
+      const formattedTime = minutesToTimeString(timeStringToMinutes(nextOpenTimeStr));
+      if (offset === 1) {
+        nextOpenLabel = `Tomorrow at ${formattedTime}`;
+      } else {
+        const dayName = futureDateObj.toLocaleDateString('en-US', { weekday: 'short' });
+        nextOpenLabel = `${dayName} at ${formattedTime}`;
+      }
+      break;
+    }
+
+    if (!foundOpen) {
+      nextOpenLabel = `Tomorrow at ${minutesToTimeString(timeStringToMinutes(globalDefault.openingTime))}`;
+    }
   }
-  const nextAvailableOpening = {
+
+  let nextAvailableOpening = {
     date: nextOpenDateStr,
     time: nextOpenTimeStr,
-    label: `${nextOpenDateStr === evalDateStr ? 'Today' : 'Tomorrow'} at ${minutesToTimeString(timeStringToMinutes(nextOpenTimeStr))}`
+    label: nextOpenLabel,
+    isEmergencyEnd: false
   };
 
   // Evaluate Emergency Overrides (Priority 1)
@@ -237,7 +294,7 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
     ruleDetails = `Emergency restriction: ${emergency.reason || 'Operations pause'}`;
     const emType = emergency.type || 'ALL_ORDERS';
 
-    if (emType === 'STORE_CLOSE' || emType === 'ALL_ORDERS') {
+    if (emType === 'STORE_CLOSE' || emType === 'ALL_ORDERS' || emType === 'PAUSE_ALL') {
       storeStatus = 'EMERGENCY_PAUSED';
       allowImmediateOrders = false;
       allowScheduledOrders = false;
@@ -252,6 +309,48 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
       allowImmediateOrders = true;
       allowScheduledOrders = false;
       statusReason = emergency.message || 'Advance scheduled ordering is temporarily paused. Immediate orders are being accepted.';
+    } else if (emType === 'SELECTED_AREAS') {
+      storeStatus = 'OPEN';
+      allowImmediateOrders = true;
+      allowScheduledOrders = globalDefault.isSchedulingEnabled;
+      statusReason = emergency.message || 'Deliveries to selected areas are temporarily suspended.';
+    }
+
+    // Set precise resume / reopen time from emergency restriction
+    const rawEndTime = emergency.endTime || settings?.policies?.emergencyPause?.resumesAt;
+    if (rawEndTime) {
+      const endKolkata = getKolkataDateTime(new Date(rawEndTime));
+      const formattedEndTime = minutesToTimeString(endKolkata.totalMinutes);
+
+      let reopenLabel = '';
+      if (endKolkata.ymd === currentKolkata.ymd) {
+        reopenLabel = `Today at ${formattedEndTime}`;
+      } else {
+        const [ey, em, ed] = endKolkata.ymd.split('-').map(Number);
+        const [cy, cm, cd] = currentKolkata.ymd.split('-').map(Number);
+        const dayDiff = Math.round((new Date(Date.UTC(ey, em - 1, ed)).getTime() - new Date(Date.UTC(cy, cm - 1, cd)).getTime()) / 86400000);
+        if (dayDiff === 1) {
+          reopenLabel = `Tomorrow at ${formattedEndTime}`;
+        } else {
+          const endObj = new Date(Date.UTC(ey, em - 1, ed, 12, 0, 0));
+          const dayName = endObj.toLocaleDateString('en-US', { weekday: 'short' });
+          reopenLabel = `${dayName} at ${formattedEndTime}`;
+        }
+      }
+
+      nextAvailableOpening = {
+        date: endKolkata.ymd,
+        time: endKolkata.time,
+        label: reopenLabel,
+        isEmergencyEnd: true
+      };
+    } else {
+      nextAvailableOpening = {
+        date: nextOpenDateStr,
+        time: nextOpenTimeStr,
+        label: null,
+        isEmergencyEnd: false
+      };
     }
   } else if (isStoreClosedDay) {
     storeStatus = globalDefault.allowAfterHoursScheduledOrders && globalDefault.isSchedulingEnabled ? 'SCHEDULED_ONLY' : 'CLOSED';
@@ -273,7 +372,7 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
         storeStatus = 'SCHEDULED_ONLY';
         allowImmediateOrders = false;
         allowScheduledOrders = true;
-        statusReason = 'Store is currently closed for instant delivery. You can schedule your order for the next available delivery slot.';
+        statusReason = 'Store is currently closed. You can schedule your order for the next available delivery slot.';
       } else {
         storeStatus = 'CLOSED';
         allowImmediateOrders = false;

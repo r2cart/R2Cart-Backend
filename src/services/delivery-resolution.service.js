@@ -84,7 +84,28 @@ export async function resolveVillageDeliveryRules({
 
   // If matched an Area directly (legacy compatibility)
   if (!matchedVillage && matchedArea) {
-    const isPaused = Boolean(matchedArea.isPaused);
+    let isPaused = Boolean(matchedArea.isPaused);
+    let pauseReason = isPaused ? (matchedArea.pauseReason || matchedArea.notes || 'Delivery area is temporarily paused.') : null;
+
+    const emergencySettings = storeSchedule.emergencyDetails;
+    if (emergencySettings && emergencySettings.isActive) {
+      const affectedIds = Array.isArray(emergencySettings.affectedVillageIds) ? emergencySettings.affectedVillageIds : [];
+      const isTargetAffected = affectedIds.some(id => {
+        const idLower = String(id).trim().toLowerCase();
+        return idLower === String(matchedArea.id).trim().toLowerCase() ||
+               idLower === String(matchedArea.name).trim().toLowerCase() ||
+               idLower === normKey;
+      });
+
+      if (emergencySettings.type === 'SELECTED_AREAS' && isTargetAffected) {
+        isPaused = true;
+        pauseReason = emergencySettings.message || 'Delivery paused in this area due to an active emergency.';
+      } else if (emergencySettings.type === 'ALL_ORDERS' || emergencySettings.type === 'STORE_CLOSE') {
+        isPaused = true;
+        pauseReason = emergencySettings.message || 'Store orders temporarily paused.';
+      }
+    }
+
     const areaHasFee = matchedArea.deliveryFee !== null && matchedArea.deliveryFee !== undefined;
     const areaHasMin = matchedArea.minimumOrder !== null && matchedArea.minimumOrder !== undefined;
     const areaHasFree = matchedArea.freeDeliveryThreshold !== null && matchedArea.freeDeliveryThreshold !== undefined;
@@ -92,7 +113,7 @@ export async function resolveVillageDeliveryRules({
     return {
       isServiceable: !isPaused,
       isPaused,
-      pauseReason: isPaused ? (matchedArea.pauseReason || matchedArea.notes || 'Delivery area is temporarily paused.') : null,
+      pauseReason,
       villageId: matchedArea.id,
       villageName: matchedArea.name,
       areaId: matchedArea.id,
@@ -134,7 +155,14 @@ export async function resolveVillageDeliveryRules({
   const emergencySettings = storeSchedule.emergencyDetails;
   if (emergencySettings && emergencySettings.isActive) {
     const affectedIds = Array.isArray(emergencySettings.affectedVillageIds) ? emergencySettings.affectedVillageIds : [];
-    if (emergencySettings.type === 'SELECTED_AREAS' && affectedIds.includes(v.id)) {
+    const isTargetAffected = affectedIds.some(id => {
+      const idLower = String(id).trim().toLowerCase();
+      return idLower === String(v.id).trim().toLowerCase() ||
+             idLower === String(v.name).trim().toLowerCase() ||
+             idLower === normKey;
+    });
+
+    if (emergencySettings.type === 'SELECTED_AREAS' && isTargetAffected) {
       isPaused = true;
       pauseReason = emergencySettings.message || 'Delivery paused in this village due to an active emergency.';
     } else if (emergencySettings.type === 'ALL_ORDERS' || emergencySettings.type === 'STORE_CLOSE') {

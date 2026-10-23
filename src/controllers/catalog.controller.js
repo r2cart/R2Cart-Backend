@@ -74,13 +74,20 @@ export const suggestions=asyncHandler(async(req,res)=>{
   ok(res,rows.map(r=>({id:r.id,name:r.name,unit:r.unit,price:Number(r.price),stock:r.stock,image:r.images?.[0]?.url||null})));
 });
 export const delivery=asyncHandler(async(req,res)=>{
-  const [areas,villages,settings]=await Promise.all([
+  const [areas,villages,settings,schedule]=await Promise.all([
     prisma.deliveryArea.findMany({where:{status:'ACTIVE'}}),
     prisma.deliveryVillage.findMany({where:{status:'ACTIVE'}}),
-    prisma.storeSetting.findUnique({where:{id:1}})
+    prisma.storeSetting.findUnique({where:{id:1}}),
+    resolveEffectiveStoreSchedule()
   ]);
 
-  const activeVillages=villages.filter(v=>!v.isPaused).map(v=>{
+  const activeEmergency = schedule?.isEmergencyActive ? schedule?.emergencyDetails : null;
+  const isEmergencyActive = Boolean(schedule?.isEmergencyActive);
+  const emergencyType = activeEmergency?.type;
+  const affectedList = (Array.isArray(activeEmergency?.affectedVillageIds) ? activeEmergency.affectedVillageIds : []).map(x => String(x).trim().toLowerCase());
+  const affectedSet = new Set(affectedList);
+
+  const activeVillages=villages.map(v=>{
     const fee = v.deliveryFee !== null && v.deliveryFee !== undefined && v.deliveryFee !== ''
       ? Number(v.deliveryFee)
       : Number(settings?.deliveryFee || 20);
@@ -91,6 +98,18 @@ export const delivery=asyncHandler(async(req,res)=>{
       ? Number(v.freeDeliveryThreshold)
       : Number(settings?.freeDeliveryThreshold || 499);
     const estMins = v.estimatedMinutes ? Number(v.estimatedMinutes) : 30;
+
+    const isVillageSuspended = Boolean(
+      v.isPaused ||
+      (isEmergencyActive && (
+        emergencyType === 'ALL_ORDERS' ||
+        emergencyType === 'STORE_CLOSE' ||
+        (emergencyType === 'SELECTED_AREAS' && (
+          affectedSet.has(String(v.id).toLowerCase()) ||
+          affectedSet.has(String(v.name).toLowerCase())
+        ))
+      ))
+    );
 
     return {
       id:v.id,
@@ -104,21 +123,42 @@ export const delivery=asyncHandler(async(req,res)=>{
       schedule:v.schedule,
       allowCod:v.allowCod ?? true,
       allowScheduled:v.allowScheduled ?? true,
-      isVillage:true
+      isVillage:true,
+      isPaused:isVillageSuspended,
+      pauseReason:isVillageSuspended ? (activeEmergency?.message || v.notes || 'Deliveries to this village are temporarily paused.') : null
     };
   });
 
-  const activeAreas=areas.filter(a=>!a.isPaused).map(a=>({
-    id:a.id,
-    name:a.name,
-    localities:Array.isArray(a.pincodes)?a.pincodes:[],
-    deliveryFee:Number(a.deliveryFee),
-    minimumOrder:Number(a.minimumOrder),
-    freeDeliveryThreshold:Number(a.freeDeliveryThreshold),
-    estimatedMinutes:a.estimatedMinutes,
-    radiusKm:Number(a.radiusKm||settings?.globalDeliveryRadius||5),
-    isVillage:false
-  }));
+  const activeAreas=areas.map(a=>{
+    const locs = Array.isArray(a.pincodes) ? a.pincodes : [];
+    const suspendedLocalities = locs.filter(loc => affectedSet.has(String(loc).trim().toLowerCase()));
+    const isAreaSuspended = Boolean(
+      a.isPaused ||
+      (isEmergencyActive && (
+        emergencyType === 'ALL_ORDERS' ||
+        emergencyType === 'STORE_CLOSE' ||
+        (emergencyType === 'SELECTED_AREAS' && (
+          affectedSet.has(String(a.id).toLowerCase()) ||
+          affectedSet.has(String(a.name).toLowerCase())
+        ))
+      ))
+    );
+
+    return {
+      id:a.id,
+      name:a.name,
+      localities:locs,
+      deliveryFee:Number(a.deliveryFee),
+      minimumOrder:Number(a.minimumOrder),
+      freeDeliveryThreshold:Number(a.freeDeliveryThreshold),
+      estimatedMinutes:a.estimatedMinutes,
+      radiusKm:Number(a.radiusKm||settings?.globalDeliveryRadius||5),
+      isVillage:false,
+      isPaused:isAreaSuspended,
+      pauseReason:isAreaSuspended ? (activeEmergency?.message || a.notes || 'Deliveries to this area are temporarily paused.') : null,
+      suspendedLocalities
+    };
+  });
 
   ok(res,{
     villages:activeVillages,

@@ -98,11 +98,17 @@ export async function calculateCart(tx, userId, couponCode, rules) {
   if (couponCode) {
     coupon = await tx.coupon.findUnique({ where: { code: couponCode.toUpperCase() } });
 
-    if (!coupon || coupon.status !== 'ACTIVE' || coupon.startsAt > now || coupon.expiresAt < now) {
-      throw new AppError('Coupon is unavailable or expired', 422);
+    if (!coupon) {
+      throw new AppError('Invalid coupon code', 404);
+    }
+    if (coupon.status !== 'ACTIVE') {
+      throw new AppError('This coupon is currently inactive', 422);
     }
     if (coupon.usageLimit !== null && coupon.usageCount >= coupon.usageLimit) {
       throw new AppError('Coupon overall usage limit has been reached', 422);
+    }
+    if (coupon.startsAt > now || coupon.expiresAt < now) {
+      throw new AppError('Coupon is expired or not yet active', 422);
     }
     if (subtotal < Number(coupon.minimumOrder)) {
       throw new AppError(`Minimum order to use this coupon is ₹${coupon.minimumOrder}`, 422);

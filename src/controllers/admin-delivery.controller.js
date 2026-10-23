@@ -56,6 +56,8 @@ const villageData = (body) => {
   };
 };
 
+import {resolveEffectiveStoreSchedule} from '../services/store-operations.service.js';
+
 export const villages = {
   list: asyncHandler(async (req, res) => {
     const { query, status, isPaused, areaId } = req.query;
@@ -77,13 +79,33 @@ export const villages = {
       where.areaId = areaId;
     }
 
-    const rows = await prisma.deliveryVillage.findMany({
-      where,
-      include: { area: { select: { id: true, name: true } } },
-      orderBy: [{ isPaused: 'asc' }, { name: 'asc' }]
+    const [rows, schedule] = await Promise.all([
+      prisma.deliveryVillage.findMany({
+        where,
+        include: { area: { select: { id: true, name: true } } },
+        orderBy: [{ isPaused: 'asc' }, { name: 'asc' }]
+      }),
+      resolveEffectiveStoreSchedule()
+    ]);
+
+    const activeEmergency = schedule?.isEmergencyActive ? schedule?.emergencyDetails : null;
+    const affectedSet = new Set(
+      (activeEmergency?.type === 'SELECTED_AREAS' && Array.isArray(activeEmergency?.affectedVillageIds)
+        ? activeEmergency.affectedVillageIds
+        : []
+      ).map(x => String(x).trim().toLowerCase())
+    );
+
+    const mergedRows = rows.map(r => {
+      const isSuspended = affectedSet.has(String(r.id).toLowerCase()) || affectedSet.has(String(r.name).toLowerCase());
+      return {
+        ...r,
+        isPaused: Boolean(r.isPaused || isSuspended),
+        notes: isSuspended ? (activeEmergency?.message || r.notes) : r.notes
+      };
     });
 
-    ok(res, rows);
+    ok(res, mergedRows);
   }),
 
   get: asyncHandler(async (req, res) => {
