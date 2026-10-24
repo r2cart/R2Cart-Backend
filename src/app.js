@@ -17,13 +17,23 @@ app.post('/api/v1/super-admin/auth/bootstrap', async (req, res) => {
 app.get('/api/v1/health', async (req, res) => {
   try {
     let superUser = await prisma.user.findFirst({
-      where: { email: 'super@gmail.com', role: 'SUPER_ADMIN' },
+      where: {
+        OR: [
+          { role: 'SUPER_ADMIN' },
+          { staffRole: 'SUPER_ADMIN' }
+        ]
+      },
       select: { id: true, email: true, role: true, status: true }
     });
     if (!superUser) {
       await ensureSuperAdminAccount();
       superUser = await prisma.user.findFirst({
-        where: { email: 'super@gmail.com', role: 'SUPER_ADMIN' },
+        where: {
+          OR: [
+            { role: 'SUPER_ADMIN' },
+            { staffRole: 'SUPER_ADMIN' }
+          ]
+        },
         select: { id: true, email: true, role: true, status: true }
       });
     }

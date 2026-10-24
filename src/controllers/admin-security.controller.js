@@ -151,7 +151,7 @@ export const security = {
       const targetRole = current.staffRole || (current.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (current.role === 'ADMIN' ? 'ADMIN' : 'MANAGER'));
 
       // Super Admin protection
-      if ((targetRole === 'SUPER_ADMIN' || current.email === 'super@gmail.com') && callerRole !== 'SUPER_ADMIN') {
+      if ((targetRole === 'SUPER_ADMIN' || current.role === 'SUPER_ADMIN') && callerRole !== 'SUPER_ADMIN') {
         throw new AppError('Only Super Admin can modify the Super Admin account.', 403);
       }
 
@@ -166,6 +166,24 @@ export const security = {
         if (name.length < 2) throw new AppError('Name is too short', 422);
         data.name = name;
       }
+      if (req.body.email) {
+        const email = String(req.body.email).trim().toLowerCase();
+        if (email.length > 191 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          throw new AppError('Enter a valid email address', 422);
+        }
+        if (email !== current.email) {
+          const emailExists = await prisma.user.findFirst({
+            where: {
+              email,
+              id: { not: current.id }
+            }
+          });
+          if (emailExists) {
+            throw new AppError('This email is already linked to another account', 409);
+          }
+          data.email = email;
+        }
+      }
       if (req.body.mobile !== undefined) {
         const mobile = String(req.body.mobile || '').replace(/\D/g, '');
         if (mobile && !/^\d{10}$/.test(mobile)) throw new AppError('Invalid mobile format', 422);
@@ -177,7 +195,7 @@ export const security = {
         if (staffRole === 'SUPER_ADMIN' && current.role !== 'SUPER_ADMIN') {
           throw new AppError('Only one Super Admin account is allowed in the platform.', 400);
         }
-        if ((current.role === 'SUPER_ADMIN' || current.email === 'super@gmail.com') && staffRole !== 'SUPER_ADMIN') {
+        if ((current.role === 'SUPER_ADMIN' || current.staffRole === 'SUPER_ADMIN') && staffRole !== 'SUPER_ADMIN') {
           throw new AppError('The primary Super Admin account cannot be demoted.', 400);
         }
         if (staffRole === 'ADMIN' && callerRole !== 'SUPER_ADMIN' && targetRole !== 'ADMIN') {
@@ -215,13 +233,13 @@ export const security = {
       if (req.body.password) {
         const pass = String(req.body.password).trim();
         if (pass.length < 6) throw new AppError('Password must be at least 6 characters', 422);
-        data.passwordHash = await bcrypt.hash(pass, 10);
+        data.passwordHash = await bcrypt.hash(pass, 12);
       }
       if (req.body.isStaffActive !== undefined) {
         if (current.id === req.user.id && !req.body.isStaffActive) {
           throw new AppError('You cannot deactivate your own account', 400);
         }
-        if ((current.role === 'SUPER_ADMIN' || current.email === 'super@gmail.com') && !req.body.isStaffActive) {
+        if ((current.role === 'SUPER_ADMIN' || current.staffRole === 'SUPER_ADMIN') && !req.body.isStaffActive) {
           throw new AppError('The primary Super Admin account cannot be deactivated.', 400);
         }
         data.isStaffActive = Boolean(req.body.isStaffActive);
@@ -294,7 +312,7 @@ export const security = {
       const callerRole = req.user.staffRole || (req.user.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (req.user.role === 'ADMIN' ? 'ADMIN' : 'MANAGER'));
       const targetRole = current.staffRole || (current.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (current.role === 'ADMIN' ? 'ADMIN' : 'MANAGER'));
 
-      if (targetRole === 'SUPER_ADMIN' || current.role === 'SUPER_ADMIN' || current.email === 'super@gmail.com') {
+      if (targetRole === 'SUPER_ADMIN' || current.role === 'SUPER_ADMIN' || current.staffRole === 'SUPER_ADMIN') {
         throw new AppError('The primary Super Admin account cannot be deleted or removed.', 403);
       }
 

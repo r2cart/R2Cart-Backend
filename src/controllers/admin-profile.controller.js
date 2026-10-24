@@ -9,7 +9,9 @@ import {uploadMedia,isCloudinaryConfigured} from '../services/image.service.js';
 export const profileSelect={id:true,name:true,email:true,mobile:true,role:true,avatarUrl:true,createdAt:true,updatedAt:true};
 export const get=asyncHandler(async(req,res)=>ok(res,await prisma.user.findUnique({where:{id:req.user.id},select:profileSelect})));
 export const update=asyncHandler(async(req,res)=>{
- const name=String(req.body.name||'').trim(),email=String(req.body.email||'').trim().toLowerCase(),mobile=String(req.body.mobile||'').trim()||null;
+ const name=String(req.body.name!==undefined ? req.body.name : (req.user.name||'')).trim(),
+       email=String(req.body.email!==undefined ? req.body.email : (req.user.email||'')).trim().toLowerCase(),
+       mobile=req.body.mobile!==undefined ? (String(req.body.mobile||'').trim()||null) : (req.user.mobile||null);
  if(name.length<2||name.length>100)throw new AppError('Name must be 2–100 characters',422);
  if(email.length>191||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new AppError('Enter a valid email',422);
  if(mobile&&!/^[6-9]\d{9}$/.test(mobile))throw new AppError('Enter a valid 10-digit mobile number',422);

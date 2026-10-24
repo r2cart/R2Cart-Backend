@@ -295,23 +295,47 @@ export function autoSyncPrismaSchema() {
 
 export async function ensureSuperAdminAccount() {
   try {
-    console.log('[AuthBootstrap] Creating guaranteed Super Admin (super@gmail.com)...');
+    // 1. Check if ANY Super Admin already exists in the system
+    const existingSuper = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { role: 'SUPER_ADMIN' },
+          { staffRole: 'SUPER_ADMIN' }
+        ]
+      }
+    });
+
+    if (existingSuper) {
+      console.log(`[AuthBootstrap] Active Super Admin already configured (ID: ${existingSuper.id}, email: ${existingSuper.email}). Preserving custom credentials.`);
+      if (existingSuper.status !== 'ACTIVE' || !existingSuper.isStaffActive) {
+        await prisma.user.update({
+          where: { id: existingSuper.id },
+          data: {
+            status: 'ACTIVE',
+            isStaffActive: true,
+            permissions: { all: true }
+          }
+        });
+      }
+      return existingSuper;
+    }
+
+    // 2. Only if NO Super Admin exists at all, bootstrap the initial default super@gmail.com / Super@123
+    console.log('[AuthBootstrap] No Super Admin found. Bootstrapping initial Super Admin (super@gmail.com)...');
     const superPasswordHash = await bcrypt.hash('Super@123', 12);
 
-    // 1. Safely remove mobile '9876543211' from other users if any, to avoid unique collision
+    // Safely remove mobile '9876543211' from other users if any, to avoid unique collision
     await prisma.user.updateMany({
       where: { mobile: '9876543211', email: { not: 'super@gmail.com' } },
       data: { mobile: null }
     }).catch(() => {});
 
-    // 2. Unconditionally UPSERT super@gmail.com with Super@123
     const superAdmin = await prisma.user.upsert({
       where: { email: 'super@gmail.com' },
       update: {
         name: 'Platform Super Admin',
         role: 'SUPER_ADMIN',
         staffRole: 'SUPER_ADMIN',
-        passwordHash: superPasswordHash,
         status: 'ACTIVE',
         isStaffActive: true,
         permissions: { all: true }
@@ -329,52 +353,7 @@ export async function ensureSuperAdminAccount() {
       }
     });
 
-    console.log(`[AuthBootstrap] Super Admin guaranteed active: ${superAdmin.email}`);
-
-    // 3. User request: "admin bana hai live me usko delete kr dena smjhe"
-    // Delete any other user with role 'ADMIN' or 'SUPER_ADMIN' or email 'admin@gmail.com'
-    const otherAdmins = await prisma.user.findMany({
-      where: {
-        AND: [
-          { email: { not: 'super@gmail.com' } },
-          { id: { not: superAdmin.id } },
-          {
-            OR: [
-              { role: 'ADMIN' },
-              { staffRole: 'ADMIN' },
-              { role: 'SUPER_ADMIN' },
-              { staffRole: 'SUPER_ADMIN' },
-              { email: 'admin@gmail.com' }
-            ]
-          }
-        ]
-      }
-    });
-
-    if (otherAdmins.length > 0) {
-      console.log(`[AuthBootstrap] Found ${otherAdmins.length} old admin account(s) to remove.`);
-      for (const old of otherAdmins) {
-        console.log(`[AuthBootstrap] Cleaning references and deleting old admin: ${old.email} (${old.id})...`);
-        await prisma.refreshToken.deleteMany({ where: { userId: old.id } }).catch(() => {});
-        await prisma.deliveryAssignment.updateMany({ where: { assignedById: old.id }, data: { assignedById: superAdmin.id } }).catch(() => {});
-        await prisma.deliveryProof.updateMany({ where: { verifiedById: old.id }, data: { verifiedById: superAdmin.id } }).catch(() => {});
-        await prisma.deliveryStatusLog.updateMany({ where: { staffId: old.id }, data: { staffId: superAdmin.id } }).catch(() => {});
-        await prisma.auditLog.updateMany({ where: { userId: old.id }, data: { userId: superAdmin.id } }).catch(() => {});
-        await prisma.codSettlement.updateMany({ where: { settledById: old.id }, data: { settledById: superAdmin.id } }).catch(() => {});
-
-        const orderCount = await prisma.order.count({ where: { userId: old.id } }).catch(() => 0);
-        if (orderCount > 0) {
-          await prisma.user.update({
-            where: { id: old.id },
-            data: { role: 'CUSTOMER', staffRole: null, isStaffActive: false }
-          }).catch(() => {});
-          console.log(`[AuthBootstrap] Converted ${old.email} to CUSTOMER because of existing order history.`);
-        } else {
-          await prisma.user.delete({ where: { id: old.id } }).catch(() => {});
-          console.log(`[AuthBootstrap] Permanently deleted old admin: ${old.email}`);
-        }
-      }
-    }
+    console.log(`[AuthBootstrap] Initial default Super Admin guaranteed active: ${superAdmin.email}`);
     return superAdmin;
   } catch (err) {
     console.error('[AuthBootstrap] Error ensuring super admin:', err.message);
