@@ -75,6 +75,7 @@ adminRouter.patch('/products/:id/status', authorizePermission('products.edit'), 
 adminRouter.patch('/products/:id', authorizePermission('products.edit'), a.products.update);
 adminRouter.delete('/products/all', authorizeSuperAdmin, a.products.removeAll);
 adminRouter.delete('/products', authorizeSuperAdmin, a.products.removeAll);
+adminRouter.delete('/products/category/:categoryId', authorizePermission('products.edit'), a.products.removeByCategory);
 adminRouter.delete('/products/:id', authorizePermission('products.edit'), a.products.remove);
 
 // ==========================================

@@ -7,7 +7,7 @@ import {prisma} from '../config/prisma.js';
 import {env} from '../config/env.js';
 import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
-import {deleteProduct,deleteAllProducts} from '../services/product-deletion.service.js';
+import {deleteProduct,deleteAllProducts,deleteProductsByCategory} from '../services/product-deletion.service.js';
 import {couponData} from '../utils/coupon.js';
 import {uploadProductImage as uploadProductMedia,uploadMedia,isCloudinaryConfigured} from '../services/image.service.js';
 import {logAudit} from '../services/audit.service.js';
@@ -114,6 +114,7 @@ export const products={
  status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').trim().toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const product=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true}});if(!product)throw new AppError('Product not found',404);ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude})),status==='ACTIVE'?'Product activated':'Product deactivated')}),
  remove:asyncHandler(async(req,res)=>{await deleteProduct(req.params.id);ok(res,null,'Product deleted; unused Cloudinary images removed')}),
  removeAll:asyncHandler(async(req,res)=>{const result=await deleteAllProducts();ok(res,result,`All ${result.count} products deleted successfully`)}),
+  removeByCategory:asyncHandler(async(req,res)=>{const result=await deleteProductsByCategory(req.params.categoryId);ok(res,result,`All ${result.count} products in ${result.categoryName||'category'} deleted successfully`)}),
  stock:asyncHandler(async(req,res)=>{
   const current=await prisma.product.findUnique({where:{id:req.params.id}});if(!current||current.deletedAt)throw new AppError('Product not found',404);
   const stock=Number(req.body.stock),lowStockThreshold=req.body.lowStockThreshold===undefined?current.lowStockThreshold:Number(req.body.lowStockThreshold);
