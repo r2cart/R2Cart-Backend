@@ -156,7 +156,7 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     throw new AppError('Invalid credentials or unauthorized access.',401);
   }
 
-  // Super Admin must strictly use the Super Admin portal (/super-admin/login)
+  // Super Admin must strictly use the dedicated Super Admin portal
   const isSuper = user.role === 'SUPER_ADMIN' || user.staffRole === 'SUPER_ADMIN';
   if (isSuper) {
     logAudit(req,{
@@ -165,7 +165,7 @@ export const adminLogin=asyncHandler(async(req,res)=>{
       resourceName:rawIdentifier,
       details:{attemptedEmail:rawIdentifier,reason:'Super Admin attempted login on store admin portal'}
     });
-    throw new AppError('Super Admin accounts must sign in via the Super Admin portal (/super-admin/login).', 403);
+    throw new AppError('Invalid credentials or unauthorized access.', 401);
   }
 
   const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(user.role) || ['ADMIN', 'MANAGER'].includes(user.staffRole);
