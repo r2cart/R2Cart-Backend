@@ -1,3 +1,51 @@
 import express from 'express';import cors from 'cors';import helmet from 'helmet';import morgan from 'morgan';import cookieParser from 'cookie-parser';import {rateLimit} from 'express-rate-limit';import {resolve} from 'node:path';import {env} from './config/env.js';import {authRouter,adminAuthRouter,superAdminAuthRouter,deliveryAuthRouter} from './routes/auth.routes.js';import {catalogRouter} from './routes/catalog.routes.js';import {customerRouter} from './routes/customer.routes.js';import {adminRouter} from './routes/admin.routes.js';import {deliveryRouter} from './routes/delivery.routes.js';import {notificationRouter} from './routes/notification.routes.js';import {errorHandler,notFound} from './middleware/errors.js';
 const allowOrigin=(origin,done)=>{if(!origin||env.clientOrigins.includes(origin))return done(null,true);if(/\.netlify\.app$/.test(origin)||/\.vercel\.app$/.test(origin))return done(null,true);if(env.nodeEnv!=='production'&&/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))return done(null,true);return done(new Error('Origin is not allowed by CORS'))};
-export const app=express();app.use(helmet({crossOriginResourcePolicy:{policy:'cross-origin'}}));app.use(cors({origin:allowOrigin,credentials:true}));app.use('/uploads',express.static(resolve(env.uploadDir),{maxAge:env.nodeEnv==='production'?'7d':0,index:false}));app.use(express.json({limit:'1mb'}));app.use(cookieParser());app.use(morgan(env.nodeEnv==='test'?'tiny':'dev'));app.use('/api/v1/auth',rateLimit({windowMs:60000,limit:20,standardHeaders:'draft-8'}),authRouter);app.use('/api/v1/admin/auth',adminAuthRouter);app.use('/api/v1/super-admin/auth',superAdminAuthRouter);app.use('/api/v1/delivery/auth',deliveryAuthRouter);app.get('/api/v1/health',(req,res)=>res.json({success:true,message:'R2Cart API is healthy',data:{timestamp:new Date().toISOString(),build:'v1.0.2'},meta:{}}));app.use('/api/v1/notifications',notificationRouter);app.use('/api/v1/delivery-portal',deliveryRouter);app.use('/api/v1/admin',adminRouter);app.use('/api/v1',catalogRouter);app.use('/api/v1',customerRouter);app.use(notFound);app.use(errorHandler);
+import {prisma} from './config/prisma.js';
+import {ensureSuperAdminAccount} from './services/schema-guard.service.js';
+
+export const app=express();app.use(helmet({crossOriginResourcePolicy:{policy:'cross-origin'}}));app.use(cors({origin:allowOrigin,credentials:true}));app.use('/uploads',express.static(resolve(env.uploadDir),{maxAge:env.nodeEnv==='production'?'7d':0,index:false}));app.use(express.json({limit:'1mb'}));app.use(cookieParser());app.use(morgan(env.nodeEnv==='test'?'tiny':'dev'));app.use('/api/v1/auth',rateLimit({windowMs:60000,limit:20,standardHeaders:'draft-8'}),authRouter);app.use('/api/v1/admin/auth',adminAuthRouter);app.use('/api/v1/super-admin/auth',superAdminAuthRouter);app.use('/api/v1/delivery/auth',deliveryAuthRouter);
+
+app.post('/api/v1/super-admin/auth/bootstrap', async (req, res) => {
+  try {
+    const admin = await ensureSuperAdminAccount();
+    res.json({ success: true, message: 'Super admin successfully configured', email: admin.email });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/v1/health', async (req, res) => {
+  try {
+    let superUser = await prisma.user.findFirst({
+      where: { email: 'super@gmail.com', role: 'SUPER_ADMIN' },
+      select: { id: true, email: true, role: true, status: true }
+    });
+    if (!superUser) {
+      await ensureSuperAdminAccount();
+      superUser = await prisma.user.findFirst({
+        where: { email: 'super@gmail.com', role: 'SUPER_ADMIN' },
+        select: { id: true, email: true, role: true, status: true }
+      });
+    }
+    res.json({
+      success: true,
+      message: 'R2Cart API is healthy',
+      data: {
+        timestamp: new Date().toISOString(),
+        build: 'v1.0.4',
+        superAdminEmail: superUser?.email || null,
+        superAdminReady: Boolean(superUser)
+      },
+      meta: {}
+    });
+  } catch (err) {
+    res.json({
+      success: true,
+      message: 'R2Cart API is healthy',
+      data: { timestamp: new Date().toISOString(), build: 'v1.0.4', notice: err.message },
+      meta: {}
+    });
+  }
+});
+
+app.use('/api/v1/notifications',notificationRouter);app.use('/api/v1/delivery-portal',deliveryRouter);app.use('/api/v1/admin',adminRouter);app.use('/api/v1',catalogRouter);app.use('/api/v1',customerRouter);app.use(notFound);app.use(errorHandler);
