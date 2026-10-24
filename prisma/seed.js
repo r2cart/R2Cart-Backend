@@ -19,7 +19,13 @@ const categories=[
  ['breakfast-sauces','Breakfast & Sauces','photo-1589301760014-d929f3979dbc','#FFF3E0'],
  ['sweet-cravings','Sweet Cravings','photo-1582293041079-7814c2f12063','#FCE4EC'],
  ['household','Household Care','photo-1585832770485-e68a5dbfad52','#EAF3FF'],
- ['personal','Personal Care','photo-1598440947619-2c35fc9aa908','#F7ECFF']
+ ['personal','Personal Care','photo-1598440947619-2c35fc9aa908','#F7ECFF'],
+ ['baby-care','Baby Care','photo-1515488042361-ee00e0ddd4e4','#EBF4FF'],
+ ['jewellery','Jewellery','photo-1515562141207-7a88fb7ce338','#FFF0F6'],
+ ['cleaning-kitchen','Cleaning & Kitchen','photo-1585832770485-e68a5dbfad52','#E8F8F5'],
+ ['paan-corner','Paan Corner','photo-1621996346565-e3d5d6281220','#E8F5E9'],
+ ['pharma-wellness','Pharma & Wellness','photo-1584308666744-24d5c474f2ae','#F3E5F5'],
+ ['stationery-utilities','Stationery & Utilities','photo-1583485088034-697b5bc54ccd','#FFFDE7']
 ];
 
 const products=[

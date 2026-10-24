@@ -1,6 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../src/config/prisma.js';
 
 const newCategories = [
   {
@@ -741,9 +739,15 @@ async function main() {
   })));
 }
 
-main()
-  .catch(err => {
-    console.error('Error during seeding:', err);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
+export async function seedTenTenCategories() {
+  return main();
+}
+
+if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('seed-ten-ten-categories.js')) {
+  main()
+    .catch(err => {
+      console.error('Error during seeding:', err);
+      process.exit(1);
+    })
+    .finally(() => prisma.$disconnect());
+}
