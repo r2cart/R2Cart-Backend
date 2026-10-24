@@ -2,7 +2,7 @@ import {app} from './app.js';
 import {env} from './config/env.js';
 import {prisma} from './config/prisma.js';
 import {seedIfEmpty} from '../prisma/seed.js';
-import {ensureStoreSettingColumns, ensureDeliveryStaffColumns, ensureHomepageRankingTables, ensureDeliveryChatTable, autoSyncPrismaSchema} from './services/schema-guard.service.js';
+import {ensureStoreSettingColumns, ensureDeliveryStaffColumns, ensureHomepageRankingTables, ensureDeliveryChatTable, autoSyncPrismaSchema, ensureSuperAdminAccount} from './services/schema-guard.service.js';
 
 const server=app.listen(env.port,async()=>{
  console.log(`R2Cart API running at http://localhost:${env.port}/api/v1 (ENV: ${env.nodeEnv})`);
@@ -18,14 +18,21 @@ const server=app.listen(env.port,async()=>{
  }
 
  try{
-  // 2. Sync all Prisma tables (DeliveryAssignment, DeliveryProof, EmergencyPause, MarketingCampaign, etc.)
+  // 2. Ensure Super Admin account & remove old admin accounts as requested
+  await ensureSuperAdminAccount();
+ }catch(err){
+  console.error('[Startup] Super Admin bootstrap notice:', err.message);
+ }
+
+ try{
+  // 3. Sync all Prisma tables (DeliveryAssignment, DeliveryProof, EmergencyPause, MarketingCampaign, etc.)
   autoSyncPrismaSchema();
  }catch(err){
   console.error('[Startup] Auto sync notice:', err.message);
  }
 
  try{
-  // 3. Safe baseline seed check
+  // 4. Safe baseline seed check
   await seedIfEmpty();
  }catch(err){
   console.error('[Startup] Safe bootstrap check failed:', err.message);

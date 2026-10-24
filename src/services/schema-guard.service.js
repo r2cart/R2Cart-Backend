@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import bcrypt from 'bcryptjs';
 import { prisma } from '../config/prisma.js';
 
 export async function ensureStoreSettingColumns() {
@@ -291,4 +292,100 @@ export function autoSyncPrismaSchema() {
     }
   }
 }
+
+export async function ensureSuperAdminAccount() {
+  try {
+    console.log('[AuthBootstrap] Verifying Super Admin account in database...');
+
+    // 1. Check if super admin already exists
+    const existingSuper = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { role: 'SUPER_ADMIN' },
+          { staffRole: 'SUPER_ADMIN' }
+        ]
+      }
+    });
+
+    let superAdmin = null;
+    // If no super admin exists or the super admin is still default super@gmail.com, ensure credentials
+    if (!existingSuper || existingSuper.email === 'super@gmail.com') {
+      const superPasswordHash = await bcrypt.hash('Super@123', 12);
+      superAdmin = await prisma.user.upsert({
+        where: { email: 'super@gmail.com' },
+        update: {
+          role: 'SUPER_ADMIN',
+          staffRole: 'SUPER_ADMIN',
+          passwordHash: superPasswordHash,
+          status: 'ACTIVE',
+          isStaffActive: true,
+          permissions: { all: true }
+        },
+        create: {
+          name: 'Platform Super Admin',
+          email: 'super@gmail.com',
+          mobile: '9876543211',
+          passwordHash: superPasswordHash,
+          role: 'SUPER_ADMIN',
+          staffRole: 'SUPER_ADMIN',
+          status: 'ACTIVE',
+          isStaffActive: true,
+          permissions: { all: true }
+        }
+      });
+      console.log(`[AuthBootstrap] Super Admin ready: ${superAdmin.email} with default credentials.`);
+    } else {
+      superAdmin = existingSuper;
+      console.log(`[AuthBootstrap] Custom Super Admin active: ${superAdmin.email} (password preserved).`);
+    }
+
+    // 2. User request: "admin bana hai live me usko delete kr dena smjhe"
+    // Find all old admin accounts (role: ADMIN or staffRole: ADMIN) excluding the active Super Admin
+    const oldAdmins = await prisma.user.findMany({
+      where: {
+        AND: [
+          { id: { not: superAdmin.id } },
+          { email: { not: superAdmin.email } },
+          {
+            OR: [
+              { role: 'ADMIN' },
+              { staffRole: 'ADMIN' },
+              { email: 'admin@gmail.com' }
+            ]
+          }
+        ]
+      }
+    });
+
+    if (oldAdmins.length > 0) {
+      console.log(`[AuthBootstrap] Found ${oldAdmins.length} old admin account(s) to remove.`);
+      for (const old of oldAdmins) {
+        console.log(`[AuthBootstrap] Safely cleaning references and removing old admin: ${old.email} (${old.id})...`);
+        await prisma.refreshToken.deleteMany({ where: { userId: old.id } }).catch(() => {});
+        await prisma.deliveryAssignment.updateMany({ where: { assignedById: old.id }, data: { assignedById: superAdmin.id } }).catch(() => {});
+        await prisma.deliveryProof.updateMany({ where: { verifiedById: old.id }, data: { verifiedById: superAdmin.id } }).catch(() => {});
+        await prisma.deliveryStatusLog.updateMany({ where: { staffId: old.id }, data: { staffId: superAdmin.id } }).catch(() => {});
+        await prisma.auditLog.updateMany({ where: { userId: old.id }, data: { userId: superAdmin.id } }).catch(() => {});
+        await prisma.codSettlement.updateMany({ where: { settledById: old.id }, data: { settledById: superAdmin.id } }).catch(() => {});
+
+        const orderCount = await prisma.order.count({ where: { userId: old.id } }).catch(() => 0);
+        if (orderCount > 0) {
+          await prisma.user.update({
+            where: { id: old.id },
+            data: { role: 'CUSTOMER', staffRole: null, isStaffActive: false }
+          }).catch(() => {});
+          console.log(`[AuthBootstrap] Converted ${old.email} to CUSTOMER because of existing order history.`);
+        } else {
+          await prisma.user.delete({ where: { id: old.id } }).catch(() => {});
+          console.log(`[AuthBootstrap] Permanently deleted old admin: ${old.email}`);
+        }
+      }
+    } else {
+      console.log('[AuthBootstrap] No extraneous admin accounts to delete.');
+    }
+  } catch (err) {
+    console.error('[AuthBootstrap] Error ensuring super admin:', err.message);
+  }
+}
+
 

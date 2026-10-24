@@ -156,9 +156,9 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     throw new AppError('Invalid credentials or unauthorized access.',401);
   }
 
-  // Only Store Admins and Managers are authorized on this portal
+  // Super Admin, Store Admins, and Managers are authorized on this portal
   const isSuper = user.role === 'SUPER_ADMIN' || user.staffRole === 'SUPER_ADMIN';
-  const isAdminOrManager = !isSuper && (['ADMIN', 'MANAGER'].includes(user.role) || ['ADMIN', 'MANAGER'].includes(user.staffRole));
+  const isAdminOrManager = isSuper || (['ADMIN', 'MANAGER'].includes(user.role) || ['ADMIN', 'MANAGER'].includes(user.staffRole));
   if (!isAdminOrManager) {
     logAudit(req,{
       module:'AUTH',
