@@ -15,7 +15,18 @@ export function validateImport(rows,categories,existing){
   const errors=[];let pack={};
   try{pack=variantData(row)}catch(error){errors.push(error.message)}
   if(row.stock===undefined||clean(row.stock)==='')errors.push('Stock is required; enter 0 for an out-of-stock pack');
-  const category=categories.find(cat=>cat.slug===clean(row.category)||normalized(cat.name)===normalized(row.category));
+  const rawCat = clean(row.category);
+  const resolvedSlug = {
+    'dairy-breakfast': 'dairy-bread-eggs',
+    'staples': 'atta-rice-dal-oil',
+    'cooking': 'masala-dry-fruits',
+    'beverages': 'cold-drinks-juices',
+    'bakery': 'biscuits-bakery',
+    'instant': 'packaged-food',
+    'instant-food': 'packaged-food'
+  }[rawCat.toLowerCase()] || rawCat;
+
+  const category=categories.find(cat=>cat.slug===rawCat||cat.slug===resolvedSlug||normalized(cat.name)===normalized(rawCat));
   if(!category||category.status==='INACTIVE')errors.push('Choose an existing active category name or slug');
   const name=clean(row.name),description=clean(row.description),groupCode=clean(row.groupCode),image=clean(row.image),imageFile=clean(row.imageFile);
   if(!name||name.length>191)errors.push('Product name is required (maximum 191 characters)');

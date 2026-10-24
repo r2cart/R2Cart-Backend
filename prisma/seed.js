@@ -7,15 +7,19 @@ const img=id=>`https://images.unsplash.com/${id}?auto=format&fit=crop&w=600&q=80
 
 const categories=[
  ['fruits-vegetables','Fruits & Vegetables','photo-1610832958506-aa56368176cf','#EAF8E8'],
- ['dairy-breakfast','Dairy & Breakfast','photo-1550583724-b2692b85b150','#E9F5FF'],
+ ['dairy-bread-eggs','Dairy, Bread & Eggs','photo-1550583724-b2692b85b150','#E9F5FF'],
+ ['atta-rice-dal-oil','Atta, Rice, Dal & Oil','photo-1586201375761-83865001e31c','#FFF6D9'],
+ ['masala-dry-fruits','Masalas & Dry Fruits','photo-1596040033229-a9821ebd058d','#FFF0E5'],
+ ['cold-drinks-juices','Cold Drinks & Juices','photo-1629203851122-3726ecdf080e','#FFEDED'],
  ['snacks','Snacks','photo-1566478989037-eec170784d0b','#FFF2DF'],
- ['beverages','Beverages','photo-1544145945-f90425340c7e','#FFEDED'],
- ['staples','Atta, Rice & Dal','photo-1586201375761-83865001e31c','#FFF6D9'],
- ['cooking','Cooking Essentials','photo-1474979266404-7eaacbcd87c5','#F9EDE0'],
+ ['biscuits-bakery','Biscuits & Bakery','photo-1558961363-fa8fdf82db35','#FFF0E4'],
+ ['ice-creams-more','Ice Creams & More','photo-1501443762994-82bd5dace89a','#FFE8EC'],
+ ['tea-coffee','Tea & Coffee','photo-1544787219-7f47ccb76574','#F5EBE1'],
+ ['packaged-food','Packaged Food','photo-1612929633738-8fe44f7ec841','#FFF3D6'],
+ ['breakfast-sauces','Breakfast & Sauces','photo-1589301760014-d929f3979dbc','#FFF3E0'],
+ ['sweet-cravings','Sweet Cravings','photo-1582293041079-7814c2f12063','#FCE4EC'],
  ['household','Household Care','photo-1585832770485-e68a5dbfad52','#EAF3FF'],
- ['personal','Personal Care','photo-1598440947619-2c35fc9aa908','#F7ECFF'],
- ['bakery','Bakery','photo-1509440159596-0249088772ff','#FFF0E4'],
- ['instant','Instant Food','photo-1612929633738-8fe44f7ec841','#FFF3D6']
+ ['personal','Personal Care','photo-1598440947619-2c35fc9aa908','#F7ECFF']
 ];
 
 const products=[

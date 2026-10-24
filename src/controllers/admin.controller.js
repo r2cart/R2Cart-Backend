@@ -132,7 +132,7 @@ const categoryData=body=>{
  if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Invalid category status',422);
  return {name,slug,image:String(body.image||'').trim()||null,color:String(body.color||'').trim()||'#EAF8E8',position:Number(body.position||0),status,parentId:body.parentId||null};
 };
-const categoryInclude={parent:{select:{id:true,name:true}},children:{select:{id:true,name:true,status:true},orderBy:{position:'asc'}},_count:{select:{products:true}}};
+const categoryInclude={parent:{select:{id:true,name:true}},children:{select:{id:true,name:true,status:true},orderBy:{position:'asc'}},_count:{select:{products:{where:{deletedAt:null}}}}};
 export const categories={
  list:asyncHandler(async(req,res)=>ok(res,await prisma.category.findMany({include:categoryInclude,orderBy:[{position:'asc'},{name:'asc'}]}))),
  create:asyncHandler(async(req,res)=>created(res,await prisma.category.create({data:categoryData(req.body),include:categoryInclude}),'Category created')),
@@ -141,7 +141,7 @@ export const categories={
   ok(res,await prisma.category.update({where:{id:req.params.id},data:categoryData(req.body),include:categoryInclude}),'Category updated');
  }),
  remove:asyncHandler(async(req,res)=>{
-  const category=await prisma.category.findUnique({where:{id:req.params.id},include:{_count:{select:{products:true,children:true}}}});
+  const category=await prisma.category.findUnique({where:{id:req.params.id},include:{_count:{select:{products:{where:{deletedAt:null}},children:true}}}});
   if(!category)throw new AppError('Category not found',404);
   if(category._count.products||category._count.children)throw new AppError('Remove this category’s products and subcategories before deleting it.',409);
   await prisma.category.delete({where:{id:req.params.id}});
