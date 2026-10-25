@@ -18,7 +18,7 @@ const categories=[
  ['packaged-food','Packaged Food','photo-1612929633738-8fe44f7ec841','#FFF3D6'],
  ['breakfast-sauces','Breakfast & Sauces','photo-1589301760014-d929f3979dbc','#FFF3E0'],
  ['sweet-cravings','Sweet Cravings','photo-1582293041079-7814c2f12063','#FCE4EC'],
- ['household','Household Care','photo-1585832770485-e68a5dbfad52','#EAF3FF'],
+ ['resin-art','Resin Art','https://res.cloudinary.com/eemyxxfb/image/upload/v1792945541/R2Cart/Categories/ar61qhycizfqa5wuduvm.jpg','#E0F7FA'],
  ['personal','Personal Care','photo-1598440947619-2c35fc9aa908','#F7ECFF'],
  ['baby-care','Baby Care','photo-1515488042361-ee00e0ddd4e4','#EBF4FF'],
  ['jewellery','Jewellery','photo-1515562141207-7a88fb7ce338','#FFF0F6'],

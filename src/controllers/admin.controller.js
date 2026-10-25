@@ -9,7 +9,7 @@ import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
 import {deleteProduct,deleteAllProducts,deleteProductsByCategory} from '../services/product-deletion.service.js';
 import {couponData} from '../utils/coupon.js';
-import {uploadProductImage as uploadProductMedia,uploadMedia,relocateProductImage,isCloudinaryConfigured} from '../services/image.service.js';
+import {uploadProductImage as uploadProductMedia,uploadMedia,relocateProductImage,isCloudinaryConfigured,productImagePublicId,deleteProductImage} from '../services/image.service.js';
 import {logAudit} from '../services/audit.service.js';
 
 const saveLocalFallback=(buffer,folder)=>{
@@ -298,13 +298,29 @@ export const categories={
  create:asyncHandler(async(req,res)=>created(res,await prisma.category.create({data:categoryData(req.body),include:categoryInclude}),'Category created')),
  update:asyncHandler(async(req,res)=>{
   if(req.body.parentId===req.params.id)throw new AppError('A category cannot be its own parent',422);
-  ok(res,await prisma.category.update({where:{id:req.params.id},data:categoryData(req.body),include:categoryInclude}),'Category updated');
+  const existing=await prisma.category.findUnique({where:{id:req.params.id}});
+  if(!existing)throw new AppError('Category not found',404);
+  const nextData=categoryData(req.body);
+  const updated=await prisma.category.update({where:{id:req.params.id},data:nextData,include:categoryInclude});
+  if(existing.image && existing.image !== nextData.image){
+    const oldPubId = productImagePublicId(existing.image);
+    if(oldPubId && isCloudinaryConfigured()){
+      try{ await deleteProductImage(oldPubId); }catch(e){ console.warn('Old category image cleanup notice:', e.message); }
+    }
+  }
+  ok(res,updated,'Category updated');
  }),
  remove:asyncHandler(async(req,res)=>{
   const category=await prisma.category.findUnique({where:{id:req.params.id},include:{_count:{select:{products:{where:{deletedAt:null}},children:true}}}});
   if(!category)throw new AppError('Category not found',404);
   if(category._count.products||category._count.children)throw new AppError('Remove this category’s products and subcategories before deleting it.',409);
   await prisma.category.delete({where:{id:req.params.id}});
+  if(category.image){
+    const oldPubId = productImagePublicId(category.image);
+    if(oldPubId && isCloudinaryConfigured()){
+      try{ await deleteProductImage(oldPubId); }catch(e){ console.warn('Category image cleanup notice:', e.message); }
+    }
+  }
   ok(res,null,'Category deleted');
  })
 };
