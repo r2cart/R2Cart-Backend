@@ -92,16 +92,132 @@ export const products={
   });
  }),
  update:asyncHandler(async(req,res)=>{
-  const existing=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true,deletedAt:true}});
+  const existing=await prisma.product.findUnique({where:{id:req.params.id},include:{images:true}});
   if(!existing||existing.deletedAt)throw new AppError('Product not found',404);
   const {category,image}=req.body;
   const data=productData(req.body);
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
   if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
-  // SKU identifies inventory permanently and is never regenerated on edit.
   const imageUrl=String(image||'').trim();
-  const updated=await prisma.product.update({where:{id:req.params.id},data:{...data,categoryId:cat.id,...(imageUrl&&{images:{deleteMany:{},create:{url:imageUrl}}})},include:productInclude});
+
+  let packsToProcess = null;
+  if(req.body.packs!==undefined){
+    if(!Array.isArray(req.body.packs))throw new AppError('Pack sizes must be a list',422);
+    if(req.body.packs.length>20)throw new AppError('Add no more than 20 additional packs at once',422);
+    packsToProcess = req.body.packs.map(p => ({
+      id: p.id && !String(p.id).startsWith('new-') ? String(p.id) : null,
+      ...variantData(p),
+      status: p.status && ['ACTIVE','INACTIVE'].includes(String(p.status).toUpperCase()) ? String(p.status).toUpperCase() : data.status
+    }));
+    const units=[data.unit,...packsToProcess.map(p=>p.unit)].map(u=>String(u||'').toLowerCase().replace(/\s+/g,''));
+    if(new Set(units).size!==units.length)throw new AppError('Each pack size must be different',422);
+  }
+
+  const updated = await prisma.$transaction(async tx => {
+    let groupId = existing.variantGroupId;
+    if (!groupId && packsToProcess && packsToProcess.length > 0) {
+      groupId = existing.id;
+    }
+
+    const base = await tx.product.update({
+      where: { id: req.params.id },
+      data: {
+        ...data,
+        categoryId: cat.id,
+        variantGroupId: packsToProcess ? (packsToProcess.length > 0 ? groupId : null) : existing.variantGroupId,
+        ...(imageUrl && { images: { deleteMany: {}, create: { url: imageUrl } } })
+      },
+      include: productInclude
+    });
+
+    if (packsToProcess !== null) {
+      const effectiveGroupId = groupId || existing.id;
+      const existingVariants = await tx.product.findMany({
+        where: {
+          deletedAt: null,
+          id: { not: existing.id },
+          variantGroupId: { in: [effectiveGroupId, ...(existing.variantGroupId ? [existing.variantGroupId] : [])] }
+        }
+      });
+
+      const incomingIds = new Set(packsToProcess.map(p => p.id).filter(Boolean));
+      const toRemove = existingVariants.filter(ev => !incomingIds.has(ev.id));
+      for (const rem of toRemove) {
+        await tx.product.update({
+          where: { id: rem.id },
+          data: { deletedAt: new Date(), status: 'INACTIVE', variantGroupId: null }
+        });
+      }
+
+      for (const pack of packsToProcess) {
+        if (pack.id && existingVariants.some(ev => ev.id === pack.id)) {
+          await tx.product.update({
+            where: { id: pack.id },
+            data: {
+              unit: pack.unit,
+              mrp: pack.mrp,
+              price: pack.price,
+              stock: pack.stock,
+              status: pack.status,
+              name: data.name,
+              description: data.description,
+              categoryId: cat.id,
+              featured: data.featured,
+              bestSeller: data.bestSeller,
+              ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold }),
+              variantGroupId: effectiveGroupId,
+              ...(imageUrl && { images: { deleteMany: {}, create: { url: imageUrl } } })
+            }
+          });
+        } else {
+          const identifier = randomUUID();
+          await tx.product.create({
+            data: {
+              ...data,
+              unit: pack.unit,
+              mrp: pack.mrp,
+              price: pack.price,
+              stock: pack.stock,
+              status: pack.status,
+              id: `p-${identifier}`,
+              sku: `R2C-${identifier.replaceAll('-','').toUpperCase()}`,
+              slug: `${existing.slug.slice(0,150)}-${identifier}`,
+              variantGroupId: effectiveGroupId,
+              categoryId: cat.id,
+              images: imageUrl ? { create: { url: imageUrl } } : undefined
+            }
+          });
+        }
+      }
+
+      if (packsToProcess.length === 0 && existing.variantGroupId) {
+        await tx.product.update({
+          where: { id: existing.id },
+          data: { variantGroupId: null }
+        });
+      }
+    } else if (existing.variantGroupId) {
+      await tx.product.updateMany({
+        where: {
+          variantGroupId: existing.variantGroupId,
+          id: { not: existing.id },
+          deletedAt: null
+        },
+        data: {
+          name: data.name,
+          description: data.description,
+          categoryId: cat.id,
+          featured: data.featured,
+          bestSeller: data.bestSeller,
+          ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold })
+        }
+      });
+    }
+
+    return base;
+  });
+
   logAudit(req,{
     module:'PRODUCTS',
     action:'PRODUCT_UPDATE',
@@ -109,7 +225,7 @@ export const products={
     resourceName:updated.name,
     details:{name:updated.name,price:Number(updated.price),stock:updated.stock}
   });
-  ok(res,productDto(updated),'Product updated');
+  ok(res,productDto(updated),'Product and all pack sizes updated');
  }),
  status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').trim().toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const product=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true}});if(!product)throw new AppError('Product not found',404);ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude})),status==='ACTIVE'?'Product activated':'Product deactivated')}),
  remove:asyncHandler(async(req,res)=>{await deleteProduct(req.params.id);ok(res,null,'Product deleted; unused Cloudinary images removed')}),
