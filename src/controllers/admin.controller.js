@@ -34,6 +34,16 @@ export const uploadProductImage=asyncHandler(async(req,res)=>{
  created(res,{url:`${req.protocol}://${req.get('host')}/uploads/products/${filename}`},'Product image uploaded locally');
 });
 
+export const uploadCategoryImage=asyncHandler(async(req,res)=>{
+ if(!req.file)throw new AppError('Choose an image to upload',422);
+ if(isCloudinaryConfigured()){
+  const result=await uploadMedia(req.file.buffer,'Categories');
+  return created(res,{url:result.url,publicId:result.publicId},'Category image uploaded to Cloudinary');
+ }
+ const filename=saveLocalFallback(req.file.buffer,'categories');
+ created(res,{url:`${req.protocol}://${req.get('host')}/uploads/categories/${filename}`},'Category image uploaded locally');
+});
+
 export const uploadBannerImage=asyncHandler(async(req,res)=>{
  if(!req.file)throw new AppError('Choose an image to upload',422);
  if(isCloudinaryConfigured()){

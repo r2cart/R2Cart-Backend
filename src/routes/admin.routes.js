@@ -86,6 +86,12 @@ adminRouter.post('/categories/reorder', authorizePermission('categories.manage')
 adminRouter.post('/categories', authorizePermission('categories.manage'), a.categories.create);
 adminRouter.patch('/categories/:id', authorizePermission('categories.manage'), a.categories.update);
 adminRouter.delete('/categories/:id', authorizePermission('categories.manage'), a.categories.remove);
+adminRouter.post(
+  '/uploads/categories',
+  authorizePermission('categories.manage'),
+  productImageUpload.single('image'),
+  a.uploadCategoryImage
+);
 
 adminRouter.get('/banners', authorizePermission('banners.manage'), a.banners.list);
 adminRouter.post('/banners/reorder', authorizePermission('banners.manage'), reorder('banner'));
