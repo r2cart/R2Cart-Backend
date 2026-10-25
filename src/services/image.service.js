@@ -76,6 +76,50 @@ export async function uploadProductImage(source,categorySlug){
  }
 }
 
+export async function relocateProductImage(imageUrl, targetCategorySlug){
+ if(!imageUrl||typeof imageUrl!=='string'||!isCloudinaryConfigured()) return imageUrl;
+ const cleanCategory = String(targetCategorySlug||'').trim().toLowerCase().replace(/[^a-z0-9_-]/gi,'');
+ if(!cleanCategory) return imageUrl;
+ const oldPublicId = productImagePublicId(imageUrl);
+ if(!oldPublicId) return imageUrl;
+
+ const parts = oldPublicId.split('/');
+ if(parts.length >= 4 && parts[0] === 'R2Cart' && parts[1] === 'Categories') {
+   const oldCategory = parts[2];
+   if(oldCategory === cleanCategory) return imageUrl;
+   const filename = parts.slice(3).join('/');
+   const newPublicId = `R2Cart/Categories/${cleanCategory}/${filename}`;
+   try {
+     configure();
+     const res = await cloudinary.uploader.rename(oldPublicId, newPublicId, {
+       overwrite: true,
+       resource_type: 'image',
+       invalidate: true
+     });
+     return res.secure_url || imageUrl;
+   } catch(err) {
+     console.warn(`[Cloudinary] Relocate image failed (${oldPublicId} -> ${newPublicId}):`, err?.message || err);
+     return imageUrl;
+   }
+ } else if (parts[0] === 'R2Cart') {
+   const filename = parts.slice(parts.length - 1).join('/');
+   const newPublicId = `R2Cart/Categories/${cleanCategory}/${filename}`;
+   try {
+     configure();
+     const res = await cloudinary.uploader.rename(oldPublicId, newPublicId, {
+       overwrite: true,
+       resource_type: 'image',
+       invalidate: true
+     });
+     return res.secure_url || imageUrl;
+   } catch(err) {
+     console.warn(`[Cloudinary] Relocate image failed (${oldPublicId} -> ${newPublicId}):`, err?.message || err);
+     return imageUrl;
+   }
+ }
+ return imageUrl;
+}
+
 export async function uploadMedia(source,folder='General'){
  configure();
  if(!source||(typeof source!=='string'&&!source.length))throw new AppError('Choose an image to upload',422);

@@ -72,6 +72,7 @@ adminRouter.get('/products/:id', authorizePermission('products.view'), adminProd
 adminRouter.get('/products/:id/variants', authorizePermission('products.view'), listVariants);
 adminRouter.post('/products/:id/variants', authorizePermission('products.create'), addVariant);
 adminRouter.patch('/products/:id/status', authorizePermission('products.edit'), a.products.status);
+adminRouter.patch('/products/:id/stock', authorizePermission('products.edit'), a.products.stock);
 adminRouter.patch('/products/:id', authorizePermission('products.edit'), a.products.update);
 adminRouter.delete('/products/all', authorizeSuperAdmin, a.products.removeAll);
 adminRouter.delete('/products', authorizeSuperAdmin, a.products.removeAll);

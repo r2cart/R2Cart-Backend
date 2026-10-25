@@ -9,7 +9,7 @@ import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
 import {deleteProduct,deleteAllProducts,deleteProductsByCategory} from '../services/product-deletion.service.js';
 import {couponData} from '../utils/coupon.js';
-import {uploadProductImage as uploadProductMedia,uploadMedia,isCloudinaryConfigured} from '../services/image.service.js';
+import {uploadProductImage as uploadProductMedia,uploadMedia,relocateProductImage,isCloudinaryConfigured} from '../services/image.service.js';
 import {logAudit} from '../services/audit.service.js';
 
 const saveLocalFallback=(buffer,folder)=>{
@@ -122,6 +122,15 @@ export const products={
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
   if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
+
+  if(existing.categoryId!==cat.id){
+    if(imageUrls&&imageUrls.length>0){
+      imageUrls=await Promise.all(imageUrls.map(url=>relocateProductImage(url,cat.slug)));
+    }else if(existing.images&&existing.images.length>0){
+      const moved=await Promise.all(existing.images.map(img=>relocateProductImage(img.url,cat.slug)));
+      imageUrls=moved;
+    }
+  }
 
   let packsToProcess = null;
   if(req.body.packs!==undefined){
