@@ -627,13 +627,7 @@ async function main() {
   for (const cat of newCategories) {
     const upserted = await prisma.category.upsert({
       where: { slug: cat.slug },
-      update: {
-        name: cat.name,
-        image: cat.image,
-        color: cat.color,
-        position: cat.position,
-        status: 'ACTIVE'
-      },
+      update: {},
       create: {
         name: cat.name,
         slug: cat.slug,
@@ -671,21 +665,8 @@ async function main() {
     });
 
     if (existing) {
-      await prisma.product.update({
-        where: { id: existing.id },
-        data: {
-          name: p.name,
-          categoryId: catId,
-          price: p.price,
-          mrp: p.mrp,
-          stock: p.stock,
-          unit: p.unit,
-          description: p.description,
-          status: 'ACTIVE',
-          deletedAt: null
-        }
-      });
-      console.log(`Updated product: ${p.name}`);
+      // Preserve existing products edited by admin
+      continue;
     } else {
       await prisma.product.create({
         data: {
