@@ -64,7 +64,12 @@ const productInclude={category:true,ratings:true,images:{orderBy:{position:'asc'
 async function uniqueProductSlug(name){const base=name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||`product-${Date.now()}`;let slug=base,index=2;while(await prisma.product.findUnique({where:{slug},select:{id:true}}))slug=`${base}-${index++}`;return slug}
 export const products={
  create:asyncHandler(async(req,res)=>{
-  const {category,image}=req.body;
+  const {category}=req.body;
+  const rawImages=Array.isArray(req.body.images)?req.body.images:(req.body.image?[req.body.image]:[]);
+  const imageUrls=rawImages.map(img=>String(img||'').trim()).filter(Boolean);
+  if(!imageUrls.length)throw new AppError('At least 1 product image is required (Cover image)',422);
+  if(imageUrls.length>8)throw new AppError('Maximum 8 product images allowed',422);
+
   const data=productData(req.body);
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
@@ -77,9 +82,10 @@ export const products={
   const units=[data.unit,...packs.map(pack=>pack.unit)].map(unit=>unit.toLowerCase().replace(/\s+/g,''));
   if(new Set(units).size!==units.length)throw new AppError('Each pack size must be different',422);
   const baseId=`p-${randomUUID()}`,variantGroupId=packs.length?baseId:null;
+  const imageCreateData={create:imageUrls.map((url,position)=>({url,position}))};
   const saved=await prisma.$transaction(async tx=>{
-   const base=await tx.product.create({data:{...data,sku,id:baseId,slug,variantGroupId,categoryId:cat.id,images:image?{create:{url:String(image).trim()}}:undefined},include:productInclude});
-   for(const pack of packs){const identifier=randomUUID();await tx.product.create({data:{...data,...pack,id:`p-${identifier}`,sku:`R2C-${identifier.replaceAll('-','').toUpperCase()}`,slug:`${slug.slice(0,150)}-${identifier}`,variantGroupId,categoryId:cat.id,images:image?{create:{url:String(image).trim()}}:undefined}})}
+   const base=await tx.product.create({data:{...data,sku,id:baseId,slug,variantGroupId,categoryId:cat.id,images:imageCreateData},include:productInclude});
+   for(const pack of packs){const identifier=randomUUID();await tx.product.create({data:{...data,...pack,id:`p-${identifier}`,sku:`R2C-${identifier.replaceAll('-','').toUpperCase()}`,slug:`${slug.slice(0,150)}-${identifier}`,variantGroupId,categoryId:cat.id,images:imageCreateData}})}
    return base;
   });
   created(res,productDto(saved),'Product and all pack sizes saved');
@@ -92,14 +98,20 @@ export const products={
   });
  }),
  update:asyncHandler(async(req,res)=>{
-  const existing=await prisma.product.findUnique({where:{id:req.params.id},include:{images:true}});
+  const existing=await prisma.product.findUnique({where:{id:req.params.id},include:{images:{orderBy:{position:'asc'}}}});
   if(!existing||existing.deletedAt)throw new AppError('Product not found',404);
-  const {category,image}=req.body;
+  const {category}=req.body;
+  let imageUrls=null;
+  if(req.body.images!==undefined||req.body.image!==undefined){
+    const rawImages=Array.isArray(req.body.images)?req.body.images:(req.body.image?[req.body.image]:[]);
+    imageUrls=rawImages.map(img=>String(img||'').trim()).filter(Boolean);
+    if(!imageUrls.length)throw new AppError('At least 1 product image is required (Cover image)',422);
+    if(imageUrls.length>8)throw new AppError('Maximum 8 product images allowed',422);
+  }
   const data=productData(req.body);
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
   if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
-  const imageUrl=String(image||'').trim();
 
   let packsToProcess = null;
   if(req.body.packs!==undefined){
@@ -126,7 +138,7 @@ export const products={
         ...data,
         categoryId: cat.id,
         variantGroupId: packsToProcess ? (packsToProcess.length > 0 ? groupId : null) : existing.variantGroupId,
-        ...(imageUrl && { images: { deleteMany: {}, create: { url: imageUrl } } })
+        ...(imageUrls && { images: { deleteMany: {}, create: imageUrls.map((url, position) => ({ url, position })) } })
       },
       include: productInclude
     });
@@ -167,7 +179,7 @@ export const products={
               bestSeller: data.bestSeller,
               ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold }),
               variantGroupId: effectiveGroupId,
-              ...(imageUrl && { images: { deleteMany: {}, create: { url: imageUrl } } })
+              ...(imageUrls && { images: { deleteMany: {}, create: imageUrls.map((url, position) => ({ url, position })) } })
             }
           });
         } else {
@@ -185,7 +197,7 @@ export const products={
               slug: `${existing.slug.slice(0,150)}-${identifier}`,
               variantGroupId: effectiveGroupId,
               categoryId: cat.id,
-              images: imageUrl ? { create: { url: imageUrl } } : undefined
+              images: imageUrls ? { create: imageUrls.map((url, position) => ({ url, position })) } : (existing.images?.length ? { create: existing.images.map(img => ({ url: img.url, position: img.position })) } : undefined)
             }
           });
         }
@@ -213,6 +225,18 @@ export const products={
           ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold })
         }
       });
+      if (imageUrls) {
+        const siblings = await tx.product.findMany({
+          where: { variantGroupId: existing.variantGroupId, id: { not: existing.id }, deletedAt: null },
+          select: { id: true }
+        });
+        for (const sib of siblings) {
+          await tx.product.update({
+            where: { id: sib.id },
+            data: { images: { deleteMany: {}, create: imageUrls.map((url, position) => ({ url, position })) } }
+          });
+        }
+      }
     }
 
     return base;
