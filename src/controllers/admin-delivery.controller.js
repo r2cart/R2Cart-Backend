@@ -269,17 +269,16 @@ export const villages = {
         freeDeliveryThreshold: Number.isFinite(freeThresh) && freeThresh >= 0 ? freeThresh : 499,
         radiusKm: Number.isFinite(rad) && rad > 0 ? rad : 5.0,
         schedule: item.schedule ? String(item.schedule).trim() : null,
-        deliveryHours: item.deliveryHours ? String(item.deliveryHours).trim() : null,
         allowCod: item.allowCod !== false && String(item.allowCod).toUpperCase() !== 'NO',
         allowScheduled: item.allowScheduled !== false && String(item.allowScheduled).toUpperCase() !== 'NO',
         estimatedMinutes: Number.isFinite(estMins) && estMins > 0 ? estMins : 30,
         notes: item.notes ? String(item.notes).trim() : null,
         status: String(item.status || 'ACTIVE').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
-        areaId
+        areaId: areaId || null
       };
 
       const existing = await prisma.deliveryVillage.findFirst({
-        where: { name: { equals: name, mode: 'insensitive' } }
+        where: { name }
       });
 
       if (existing) {
@@ -323,7 +322,7 @@ export const villages = {
     const demoAreas = await prisma.deliveryArea.findMany({
       where: {
         OR: [
-          { name: { contains: 'Hathua', mode: 'insensitive' } },
+          { name: { contains: 'Hathua' } },
           { name: 'Hathua Service Zone' }
         ]
       },
@@ -336,7 +335,7 @@ export const villages = {
       where: {
         OR: [
           { name: { in: demoVillages } },
-          { name: { contains: 'Hathua', mode: 'insensitive' } },
+          { name: { contains: 'Hathua' } },
           ...(demoAreaIds.length ? [{ areaId: { in: demoAreaIds } }] : [])
         ]
       }
