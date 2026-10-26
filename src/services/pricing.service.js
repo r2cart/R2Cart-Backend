@@ -74,10 +74,10 @@ export async function calculateCart(tx, userId, couponCode, rules) {
     }
   }
 
-  if (invalidCartItemIds.length > 0) {
+  if (invalidCartItemIds.length > 0 && tx.cartItem?.deleteMany) {
     await tx.cartItem.deleteMany({
       where: { id: { in: invalidCartItemIds } }
-    });
+    }).catch(() => {});
   }
 
   if (!validItems.length) {
@@ -93,7 +93,9 @@ export async function calculateCart(tx, userId, couponCode, rules) {
   for (const item of cart.items) {
     if (item.product.stock < item.quantity) {
       if (item.product.stock <= 0) {
-        await tx.cartItem.deleteMany({ where: { id: item.id } }).catch(() => {});
+        if (tx.cartItem?.deleteMany) {
+          await tx.cartItem.deleteMany({ where: { id: item.id } }).catch(() => {});
+        }
         throw new AppError(`${item.product.name} is currently out of stock and has been removed from your basket`, 409);
       }
       throw new AppError(`${item.product.name} has only ${item.product.stock} remaining in stock`, 409);
@@ -101,7 +103,9 @@ export async function calculateCart(tx, userId, couponCode, rules) {
 
     // Expiry date verification
     if (item.product.hasExpiry && item.product.expiryDate && new Date(item.product.expiryDate) <= now) {
-      await tx.cartItem.deleteMany({ where: { id: item.id } }).catch(() => {});
+      if (tx.cartItem?.deleteMany) {
+        await tx.cartItem.deleteMany({ where: { id: item.id } }).catch(() => {});
+      }
       throw new AppError(`Cannot checkout: "${item.product.name}" has reached its expiration date and has been removed from sale.`, 409);
     }
 

@@ -19,6 +19,10 @@ import * as adminSecurity from '../controllers/admin-security.controller.js';
 import * as adminEmergency from '../controllers/admin-emergency.controller.js';
 import { adminDeliveryAssignments } from '../controllers/admin-delivery-assignments.controller.js';
 import { adminRankingController } from '../controllers/admin-ranking.controller.js';
+import { analytics } from '../controllers/admin-analytics.controller.js';
+import { purchases } from '../controllers/admin-purchases.controller.js';
+import { suppliers } from '../controllers/admin-suppliers.controller.js';
+import { expenses } from '../controllers/admin-expenses.controller.js';
 import {
   authenticate,
   authorize,
@@ -274,3 +278,42 @@ adminRouter.post('/homepage-ranking/publish', authorizeSuperAdmin, adminRankingC
 adminRouter.get('/homepage-ranking/history', authorizeSuperAdmin, adminRankingController.getHistory);
 adminRouter.post('/homepage-ranking/rollback', authorizeSuperAdmin, adminRankingController.rollback);
 adminRouter.post('/homepage-ranking/refresh-cache', authorizeSuperAdmin, adminRankingController.refreshCache);
+
+// ==========================================
+// 14. BUSINESS ANALYTICS & PROFIT MANAGEMENT
+// ==========================================
+adminRouter.get('/analytics/overview', authorizePermission('analytics.view', 'reports.view_financial'), analytics.overview);
+adminRouter.get('/analytics/sales-trend', authorizePermission('analytics.view', 'reports.view_financial'), analytics.salesTrend);
+adminRouter.get('/analytics/product-performance', authorizePermission('analytics.view', 'reports.view_financial'), analytics.productPerformance);
+adminRouter.get('/analytics/inventory-valuation', authorizePermission('inventory.view', 'analytics.cost_view'), analytics.inventoryValuation);
+adminRouter.post('/analytics/reconcile-opening-stock', authorizeSuperAdmin, analytics.reconcileOpeningStock);
+adminRouter.post('/analytics/record-wastage', authorizePermission('inventory.manage'), analytics.recordWastage);
+adminRouter.get('/analytics/cash-flow', authorizePermission('analytics.view', 'reports.view_financial'), analytics.cashFlow);
+adminRouter.get('/analytics/insights', authorizePermission('analytics.view'), analytics.insights);
+adminRouter.get('/analytics/export/:reportType', authorizePermission('reports.export', 'reports.view_financial'), analytics.exportCsv);
+
+// ==========================================
+// 15. PURCHASES & INVENTORY RECEIPT
+// ==========================================
+adminRouter.get('/purchases', authorizePermission('purchases.view'), purchases.list);
+adminRouter.get('/purchases/:id', authorizePermission('purchases.view'), purchases.get);
+adminRouter.post('/purchases', authorizePermission('purchases.manage'), purchases.create);
+adminRouter.post('/purchases/:id/finalize', authorizePermission('purchases.manage'), purchases.finalize);
+adminRouter.post('/purchases/:id/cancel', authorizePermission('purchases.manage'), purchases.cancel);
+
+// ==========================================
+// 16. SUPPLIER MANAGEMENT & PAYMENTS
+// ==========================================
+adminRouter.get('/suppliers', authorizePermission('suppliers.view'), suppliers.list);
+adminRouter.get('/suppliers/:id', authorizePermission('suppliers.view'), suppliers.get);
+adminRouter.post('/suppliers', authorizePermission('suppliers.manage'), suppliers.create);
+adminRouter.patch('/suppliers/:id', authorizePermission('suppliers.manage'), suppliers.update);
+adminRouter.post('/suppliers/:id/payments', authorizePermission('suppliers.manage'), suppliers.recordPayment);
+
+// ==========================================
+// 17. OPERATING EXPENSES
+// ==========================================
+adminRouter.get('/expenses', authorizePermission('expenses.view'), expenses.list);
+adminRouter.post('/expenses', authorizePermission('expenses.manage'), expenses.create);
+adminRouter.patch('/expenses/:id', authorizePermission('expenses.manage'), expenses.update);
+adminRouter.delete('/expenses/:id', authorizePermission('expenses.manage'), expenses.remove);

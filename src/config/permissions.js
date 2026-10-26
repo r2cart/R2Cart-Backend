@@ -135,6 +135,62 @@ export const SYSTEM_PERMISSIONS = {
     label: 'Customer Support',
     group: 'Support',
     description: 'View customer inquiries and respond to support tickets'
+  },
+
+  // Business Analytics & Profit Management
+  'analytics.view': {
+    key: 'analytics.view',
+    label: 'View Business Analytics',
+    group: 'Analytics & Profit',
+    description: 'Access business analytics dashboard, sales summaries, and product performance'
+  },
+  'analytics.cost_view': {
+    key: 'analytics.cost_view',
+    label: 'View COGS & Profit Margins',
+    group: 'Analytics & Profit',
+    description: 'View sensitive FIFO cost of goods sold, gross margins, and net operating profit'
+  },
+  'purchases.view': {
+    key: 'purchases.view',
+    label: 'View Purchases',
+    group: 'Purchases & Suppliers',
+    description: 'Browse purchase history, supplier bills, and line items'
+  },
+  'purchases.manage': {
+    key: 'purchases.manage',
+    label: 'Manage Purchases',
+    group: 'Purchases & Suppliers',
+    description: 'Create purchase drafts, allocate landed freight, and finalize inventory receipts'
+  },
+  'suppliers.view': {
+    key: 'suppliers.view',
+    label: 'View Suppliers',
+    group: 'Purchases & Suppliers',
+    description: 'View supplier profiles, purchase history, and outstanding payables'
+  },
+  'suppliers.manage': {
+    key: 'suppliers.manage',
+    label: 'Manage Suppliers',
+    group: 'Purchases & Suppliers',
+    description: 'Create and edit supplier profiles, and record supplier payments'
+  },
+  'expenses.view': {
+    key: 'expenses.view',
+    label: 'View Expenses',
+    group: 'Expenses',
+    description: 'Inspect business operating expenses and category breakdowns'
+  },
+  'expenses.manage': {
+    key: 'expenses.manage',
+    label: 'Manage Expenses',
+    group: 'Expenses',
+    description: 'Record operating expenses, attach references, and update payment status'
+  },
+  'reports.export': {
+    key: 'reports.export',
+    label: 'Export Financial Reports',
+    group: 'Reports',
+    description: 'Download CSV spreadsheets for Sales, P&L, Inventory Valuation, and Purchases'
   }
 };
 
@@ -142,9 +198,12 @@ export const PERMISSION_GROUPS = [
   { name: 'Products', keys: ['products.view', 'products.create', 'products.edit', 'products.update_stock'] },
   { name: 'Inventory', keys: ['inventory.view', 'inventory.manage'] },
   { name: 'Orders', keys: ['orders.view', 'orders.update_status', 'orders.cancel'] },
+  { name: 'Analytics & Profit', keys: ['analytics.view', 'analytics.cost_view'] },
+  { name: 'Purchases & Suppliers', keys: ['purchases.view', 'purchases.manage', 'suppliers.view', 'suppliers.manage'] },
+  { name: 'Expenses', keys: ['expenses.view', 'expenses.manage'] },
   { name: 'Customers', keys: ['customers.view_limited'] },
   { name: 'Delivery', keys: ['delivery.view', 'delivery.assign'] },
-  { name: 'Reports', keys: ['reports.view_basic', 'reports.view_financial'] },
+  { name: 'Reports', keys: ['reports.view_basic', 'reports.view_financial', 'reports.export'] },
   { name: 'Catalog & Content', keys: ['categories.manage', 'banners.manage'] },
   { name: 'Marketing & Operations', keys: ['coupons.manage', 'scheduling.manage', 'support.manage'] }
 ];

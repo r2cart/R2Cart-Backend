@@ -112,6 +112,9 @@ model User {
   codSettlements     CodSettlement[]      @relation("SettledCollections")
   adminSettlements   CodSettlement[]      @relation("AdminSettlements")
   deliveryChatMessages DeliveryChatMessage[]
+  recordedPurchases  Purchase[]           @relation("PurchasesReceived")
+  recordedSupplierPayments SupplierPayment[] @relation("SupplierPaymentsCreated")
+  recordedExpenses   Expense[]            @relation("ExpensesCreated")
 
   @@map("users")
 }
@@ -187,6 +190,9 @@ model Product {
   favorites         Favorite[]
   orderItems        OrderItem[]
   inventoryLogs     InventoryLog[]
+  purchaseItems     PurchaseItem[]
+  fifoBatches       FifoCostBatch[]
+  fifoAllocations   OrderFifoAllocation[]
 
   @@index([categoryId, status])
   @@index([name])
@@ -326,6 +332,7 @@ model Order {
   deliveryStatusLogs  DeliveryStatusLog[]
   codCollection       CodCollection?
   deliveryChatMessages DeliveryChatMessage[]
+  fifoAllocations     OrderFifoAllocation[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -345,6 +352,7 @@ model OrderItem {
   quantity  Int
   order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product   Product @relation(fields: [productId], references: [id])
+  fifoAllocations OrderFifoAllocation[]
 
   @@map("order_items")
 }
@@ -856,4 +864,213 @@ model DeliveryChatMessage {
   @@index([senderId])
   @@map("delivery_chat_messages")
 }
+
+model Supplier {
+  id            String            @id @default(cuid())
+  code          String            @unique
+  name          String
+  contactPerson String?
+  phone         String?
+  email         String?
+  address       String?           @db.Text
+  notes         String?           @db.Text
+  status        EntityStatus      @default(ACTIVE)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  purchases     Purchase[]
+  payments      SupplierPayment[]
+  fifoBatches   FifoCostBatch[]
+
+  @@index([status])
+  @@index([name])
+  @@map("suppliers")
+}
+
+model Purchase {
+  id                String            @id @default(cuid())
+  purchaseNumber    String            @unique
+  supplierId        String
+  invoiceNumber     String?
+  purchaseDate      DateTime
+  status            String            @default("DRAFT") // "DRAFT" | "RECEIVED" | "CANCELLED"
+  subtotal          Decimal           @db.Decimal(10, 2)
+  taxAmount         Decimal           @default(0.00) @db.Decimal(10, 2)
+  freightLandedCost Decimal           @default(0.00) @db.Decimal(10, 2)
+  discountAmount    Decimal           @default(0.00) @db.Decimal(10, 2)
+  totalAmount       Decimal           @db.Decimal(10, 2)
+  paymentStatus     String            @default("UNPAID") // "UNPAID" | "PARTIAL" | "PAID"
+  paidAmount        Decimal           @default(0.00) @db.Decimal(10, 2)
+  notes             String?           @db.Text
+  receivedAt        DateTime?
+  receivedById      String?
+  receivedByName    String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  supplier          Supplier          @relation(fields: [supplierId], references: [id])
+  receivedBy        User?             @relation("PurchasesReceived", fields: [receivedById], references: [id], onDelete: SetNull)
+  items             PurchaseItem[]
+  payments          SupplierPayment[]
+  fifoBatches       FifoCostBatch[]
+
+  @@index([supplierId, status])
+  @@index([purchaseDate])
+  @@index([paymentStatus])
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id                String        @id @default(cuid())
+  purchaseId        String
+  productId         String
+  productName       String
+  sku               String
+  unit              String
+  quantity          Int
+  unitCost          Decimal       @db.Decimal(10, 2)
+  allocatedFreight  Decimal       @default(0.00) @db.Decimal(10, 2)
+  effectiveUnitCost Decimal       @db.Decimal(10, 2)
+  subtotal          Decimal       @db.Decimal(10, 2)
+  batchNumber       String?
+  expiryDate        DateTime?
+  createdAt         DateTime      @default(now())
+
+  purchase          Purchase      @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product           Product       @relation(fields: [productId], references: [id])
+  fifoBatches       FifoCostBatch[]
+
+  @@index([purchaseId])
+  @@index([productId])
+  @@map("purchase_items")
+}
+
+model SupplierPayment {
+  id            String        @id @default(cuid())
+  paymentNumber String        @unique
+  supplierId    String
+  purchaseId    String?
+  amount        Decimal       @db.Decimal(10, 2)
+  paymentMethod String        @default("CASH") // "CASH" | "BANK_TRANSFER" | "UPI" | "CHEQUE" | "OTHER"
+  reference     String?
+  paymentDate   DateTime
+  notes         String?       @db.Text
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime      @default(now())
+
+  supplier      Supplier      @relation(fields: [supplierId], references: [id])
+  purchase      Purchase?     @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  createdBy     User?         @relation("SupplierPaymentsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([supplierId, paymentDate])
+  @@index([purchaseId])
+  @@map("supplier_payments")
+}
+
+model FifoCostBatch {
+  id                  String                    @id @default(cuid())
+  batchNumber         String?
+  productId           String
+  supplierId          String?
+  purchaseId          String?
+  purchaseItemId      String?
+  receivedDate        DateTime
+  quantityReceived    Int
+  quantityRemaining   Int
+  originalUnitCost    Decimal                   @db.Decimal(10, 2)
+  landedCostPerUnit   Decimal                   @default(0.00) @db.Decimal(10, 2)
+  effectiveUnitCost   Decimal                   @db.Decimal(10, 2)
+  isOpeningStock      Boolean                   @default(false)
+  isVerified          Boolean                   @default(true)
+  notes               String?                   @db.Text
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  product             Product                   @relation(fields: [productId], references: [id])
+  supplier            Supplier?                 @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  purchase            Purchase?                 @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  purchaseItem        PurchaseItem?             @relation(fields: [purchaseItemId], references: [id], onDelete: SetNull)
+  allocations         OrderFifoAllocation[]
+  wastageAllocations  StockWastageBatchAllocation[]
+
+  @@index([productId, quantityRemaining])
+  @@index([receivedDate, createdAt])
+  @@index([purchaseId])
+  @@map("fifo_cost_batches")
+}
+
+model OrderFifoAllocation {
+  id          String         @id @default(cuid())
+  orderId     String
+  orderItemId String
+  productId   String
+  batchId     String?
+  quantity    Int
+  unitCost    Decimal        @db.Decimal(10, 2)
+  totalCost   Decimal        @db.Decimal(10, 2)
+  sellingPrice Decimal       @db.Decimal(10, 2)
+  isCostKnown Boolean        @default(true)
+  status      String         @default("COMMITTED") // "COMMITTED" | "REVERSED"
+  reversedAt  DateTime?
+  createdAt   DateTime       @default(now())
+
+  order       Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  batch       FifoCostBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  product     Product        @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([status, createdAt])
+  @@map("order_fifo_allocations")
+}
+
+model Expense {
+  id            String        @id @default(cuid())
+  expenseNumber String        @unique
+  expenseDate   DateTime
+  category      String        // "DELIVERY_FUEL" | "PACKAGING" | "TRANSPORT_FREIGHT" | "RENT" | "UTILITIES" | "MAINTENANCE" | "MARKETING" | "WASTAGE_EXPIRY" | "OTHER"
+  description   String
+  amount        Decimal       @db.Decimal(10, 2)
+  paymentMethod String        @default("CASH") // "CASH" | "BANK_TRANSFER" | "UPI" | "COD_SETTLEMENT_DEDUCTION" | "OTHER"
+  status        String        @default("PAID") // "PAID" | "PENDING"
+  payee         String?
+  reference     String?
+  notes         String?       @db.Text
+  receiptUrl    String?       @db.Text
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  createdBy     User?         @relation("ExpensesCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([category, expenseDate])
+  @@index([expenseDate])
+  @@map("expenses")
+}
+
+model StockWastageBatchAllocation {
+  id            String        @id @default(cuid())
+  batchId       String
+  productId     String
+  quantity      Int
+  unitCost      Decimal       @db.Decimal(10, 2)
+  totalCostLoss Decimal       @db.Decimal(10, 2)
+  reason        String        // "EXPIRED" | "DAMAGED" | "SPOILED" | "INTERNAL_LOSS"
+  notes         String?       @db.Text
+  recordedById  String?
+  recordedByName String?
+  createdAt     DateTime      @default(now())
+
+  batch         FifoCostBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([productId, createdAt])
+  @@map("stock_wastage_batch_allocations")
+}
+
 

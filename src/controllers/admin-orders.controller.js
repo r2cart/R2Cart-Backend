@@ -4,6 +4,7 @@ import {orderDto} from '../utils/order.js';
 import {notifyCustomerOrderStatusUpdate} from '../services/notification.service.js';
 import {sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
 import {logAudit} from '../services/audit.service.js';
+import {reverseFifoAllocations} from '../services/fifo.service.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
@@ -97,6 +98,7 @@ export const orders={
       });
      }
     }
+    await reverseFifoAllocations(tx, { orderId: current.id, reason: `Admin cancellation #${current.orderNumber}` });
    }
    await tx.orderStatusHistory.create({data:{orderId:current.id,status,note:String(req.body.note||'').trim()||'Status updated by store admin'}});
    return tx.order.findUnique({where:{id:current.id},include});
