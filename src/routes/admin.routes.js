@@ -141,6 +141,8 @@ adminRouter.delete('/customers/:id', deleteCustomer);
 adminRouter.get('/delivery/villages/preview', authorizePermission('delivery.view'), adminDelivery.villages.preview);
 adminRouter.get('/delivery/villages', authorizePermission('delivery.view'), adminDelivery.villages.list);
 adminRouter.post('/delivery/villages', authorizePermission('delivery.view'), adminDelivery.villages.create);
+adminRouter.post('/delivery/villages/bulk', authorizePermission('delivery.view'), adminDelivery.villages.bulk);
+adminRouter.post('/delivery/villages/clear-demo', authorizePermission('delivery.view'), adminDelivery.villages.clearDemo);
 adminRouter.get('/delivery/villages/:id', authorizePermission('delivery.view'), adminDelivery.villages.get);
 adminRouter.patch('/delivery/villages/:id', authorizePermission('delivery.view'), adminDelivery.villages.update);
 adminRouter.patch('/delivery/villages/:id/status', authorizePermission('delivery.view'), adminDelivery.villages.status);

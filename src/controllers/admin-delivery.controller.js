@@ -227,6 +227,121 @@ export const villages = {
       targetTimeStr: time
     });
     ok(res, result);
+  }),
+
+  bulk: asyncHandler(async (req, res) => {
+    const list = Array.isArray(req.body.villages) ? req.body.villages : [];
+    if (!list.length) throw new AppError('No delivery villages provided in payload', 422);
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    const errors = [];
+
+    // Find all areas for auto-linking zone by name
+    const allAreas = await prisma.deliveryArea.findMany({ select: { id: true, name: true } });
+    const areaMap = new Map(allAreas.map(a => [a.name.trim().toLowerCase(), a.id]));
+
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      const name = String(item.name || '').trim();
+      if (!name) {
+        errors.push({ row: i + 1, error: 'Name is required' });
+        continue;
+      }
+
+      const zoneName = String(item.zoneName || item.zone || '').trim().toLowerCase();
+      const areaId = item.areaId || (zoneName ? areaMap.get(zoneName) : null) || null;
+
+      const fee = Number(item.deliveryFee);
+      const minOrd = Number(item.minimumOrder);
+      const freeThresh = Number(item.freeDeliveryThreshold);
+      const rad = Number(item.radiusKm);
+      const estMins = Number(item.estimatedMinutes);
+
+      const parsedData = {
+        name,
+        pincode: item.pincode ? String(item.pincode).trim() : null,
+        overrideMode: ['COMPLETE', 'PARTIAL'].includes(String(item.overrideMode || '').toUpperCase())
+          ? String(item.overrideMode).toUpperCase()
+          : 'COMPLETE',
+        deliveryFee: Number.isFinite(fee) && fee >= 0 ? fee : 30,
+        minimumOrder: Number.isFinite(minOrd) && minOrd >= 0 ? minOrd : 150,
+        freeDeliveryThreshold: Number.isFinite(freeThresh) && freeThresh >= 0 ? freeThresh : 499,
+        radiusKm: Number.isFinite(rad) && rad > 0 ? rad : 5.0,
+        schedule: item.schedule ? String(item.schedule).trim() : null,
+        deliveryHours: item.deliveryHours ? String(item.deliveryHours).trim() : null,
+        allowCod: item.allowCod !== false && String(item.allowCod).toUpperCase() !== 'NO',
+        allowScheduled: item.allowScheduled !== false && String(item.allowScheduled).toUpperCase() !== 'NO',
+        estimatedMinutes: Number.isFinite(estMins) && estMins > 0 ? estMins : 30,
+        notes: item.notes ? String(item.notes).trim() : null,
+        status: String(item.status || 'ACTIVE').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+        areaId
+      };
+
+      const existing = await prisma.deliveryVillage.findFirst({
+        where: { name: { equals: name, mode: 'insensitive' } }
+      });
+
+      if (existing) {
+        await prisma.deliveryVillage.update({
+          where: { id: existing.id },
+          data: parsedData
+        });
+        updatedCount++;
+      } else {
+        await prisma.deliveryVillage.create({
+          data: parsedData
+        });
+        createdCount++;
+      }
+    }
+
+    logAudit(req, {
+      module: 'DELIVERY',
+      action: 'VILLAGES_BULK_IMPORT',
+      resourceName: 'Delivery Villages Excel Import',
+      details: { createdCount, updatedCount, totalProcessed: list.length }
+    });
+
+    ok(res, {
+      createdCount,
+      updatedCount,
+      totalProcessed: list.length,
+      errors
+    }, `Bulk import complete: ${createdCount} added, ${updatedCount} updated.`);
+  }),
+
+  clearDemo: asyncHandler(async (req, res) => {
+    const demoVillages = [
+      'Rasulpur', 'Hathua', 'Hathwa Gaon', 'Ratan Chak', 'Rupan Chak', 'Ekdanga',
+      'Mani Chhapar', 'Munrera', 'Sainik School Hathua', 'Doma Hata', 'Mali Tola',
+      'Chhotki Baghi', 'Badki Baghi', 'Pritam Tola', 'Khansama Tola', 'Hathua Market',
+      'Chicktoli', 'Barwa', 'Sawrezi'
+    ];
+
+    const delVillages = await prisma.deliveryVillage.deleteMany({
+      where: {
+        name: { in: demoVillages }
+      }
+    });
+
+    const delArea = await prisma.deliveryArea.deleteMany({
+      where: {
+        name: 'Hathua Service Zone'
+      }
+    });
+
+    logAudit(req, {
+      module: 'DELIVERY',
+      action: 'CLEAR_DEMO_SEED',
+      resourceName: 'Clear Demo Seeded Delivery Addresses',
+      details: { deletedVillagesCount: delVillages.count, deletedAreasCount: delArea.count }
+    });
+
+    ok(res, {
+      deletedVillagesCount: delVillages.count,
+      deletedAreasCount: delArea.count
+    }, `Cleared demo delivery addresses (${delVillages.count} villages, ${delArea.count} zones removed).`);
   })
 };
 

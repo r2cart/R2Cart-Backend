@@ -82,27 +82,8 @@ export async function seedIfEmpty() {
     console.log('[Bootstrap] Store settings already configured - preserving admin changes.');
   }
 
-  // 3. Delivery area - created once, admin manages via Delivery page.
-  const existingArea = await prisma.deliveryArea.findFirst();
-  if (!existingArea) {
-    await prisma.deliveryArea.create({
-      data: {
-        name:                  'Hathua Service Zone',
-        pincodes:              serviceableLocalities,
-        radiusKm:              8,
-        minimumOrder:          199,
-        deliveryFee:           35,
-        freeDeliveryThreshold: 499,
-        estimatedMinutes:      20,
-        status:                'ACTIVE',
-      },
-    });
-    console.log('[Bootstrap] Default delivery area initialized.');
-  } else {
-    console.log('[Bootstrap] Delivery area already configured - preserving admin changes.');
-  }
-
-  console.log('[Bootstrap] Complete. All catalog data is managed via the admin dashboard.');
+  // Delivery areas and villages are completely managed by Admin / Super Admin via Dashboard & Excel import.
+  console.log('[Bootstrap] Complete. Delivery areas and catalog data are managed via the admin dashboard.');
 }
 
 // CLI entry-point: node prisma/seed.js
