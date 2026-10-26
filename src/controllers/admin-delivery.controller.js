@@ -319,29 +319,49 @@ export const villages = {
       'Chicktoli', 'Barwa', 'Sawrezi'
     ];
 
+    // Find demo delivery areas (e.g. Hathua Service Zone or any with demo names)
+    const demoAreas = await prisma.deliveryArea.findMany({
+      where: {
+        OR: [
+          { name: { contains: 'Hathua', mode: 'insensitive' } },
+          { name: 'Hathua Service Zone' }
+        ]
+      },
+      select: { id: true, name: true }
+    });
+    const demoAreaIds = demoAreas.map(a => a.id);
+
+    // Delete villages linked to demo areas or having demo village names
     const delVillages = await prisma.deliveryVillage.deleteMany({
       where: {
-        name: { in: demoVillages }
+        OR: [
+          { name: { in: demoVillages } },
+          { name: { contains: 'Hathua', mode: 'insensitive' } },
+          ...(demoAreaIds.length ? [{ areaId: { in: demoAreaIds } }] : [])
+        ]
       }
     });
 
-    const delArea = await prisma.deliveryArea.deleteMany({
-      where: {
-        name: 'Hathua Service Zone'
-      }
-    });
+    // Delete the demo delivery area(s)
+    let delAreasCount = 0;
+    if (demoAreaIds.length > 0) {
+      const delAreasRes = await prisma.deliveryArea.deleteMany({
+        where: { id: { in: demoAreaIds } }
+      });
+      delAreasCount = delAreasRes.count;
+    }
 
     logAudit(req, {
       module: 'DELIVERY',
       action: 'CLEAR_DEMO_SEED',
       resourceName: 'Clear Demo Seeded Delivery Addresses',
-      details: { deletedVillagesCount: delVillages.count, deletedAreasCount: delArea.count }
+      details: { deletedVillagesCount: delVillages.count, deletedAreasCount: delAreasCount }
     });
 
     ok(res, {
       deletedVillagesCount: delVillages.count,
-      deletedAreasCount: delArea.count
-    }, `Cleared demo delivery addresses (${delVillages.count} villages, ${delArea.count} zones removed).`);
+      deletedAreasCount: delAreasCount
+    }, `Cleared seeded demo delivery data (${delVillages.count} villages, ${delAreasCount} zones removed).`);
   })
 };
 
