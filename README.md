@@ -18,7 +18,7 @@ MySQL REST API for the R2Cart customer website and admin panel.
 
 ## Setup
 
-1. Create MySQL database: `CREATE DATABASE grocify CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
+1. Create MySQL database: `CREATE DATABASE r2cart CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
 2. Copy `.env.example` to `.env` and set the MySQL password plus JWT secrets.
 3. Run `npm install`.
 4. Run `npm run db:generate`.

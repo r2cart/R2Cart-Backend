@@ -27,9 +27,9 @@ async function issue(res,user,{cookieName,cookiePath='/'}={}){
  await prisma.refreshToken.create({data:{userId:user.id,tokenHash:hashToken(refresh),expiresAt:refreshExpiry()}});
  const isProd=env.nodeEnv==='production';
  const targetCookie = cookieName || (
-   user.role === 'CUSTOMER' ? 'grocify_refresh' :
-   user.role === 'DELIVERY_PERSON' ? 'grocify_delivery_refresh' :
-   'grocify_admin_refresh'
+   user.role === 'CUSTOMER' ? 'r2cart_refresh' :
+   user.role === 'DELIVERY_PERSON' ? 'r2cart_delivery_refresh' :
+   'r2cart_admin_refresh'
  );
  res.cookie(targetCookie,refresh,{
   httpOnly:true,
@@ -118,7 +118,7 @@ export const customerLogin=asyncHandler(async(req,res)=>{
 export const requestOtp=asyncHandler(async(req,res)=>{const {email,name,mobile,password}=req.body;const emailUser=await prisma.user.findUnique({where:{email}});if(emailUser?.passwordHash)throw new AppError('An account already exists with this email. Please sign in.',409);const previous=!password?await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'signup',consumedAt:null,expiresAt:{gt:new Date()}},orderBy:{createdAt:'desc'}}):null;if(!password&&!previous)throw new AppError('Signup session expired. Please enter your details again.',400);const mobileUser=password?await prisma.user.findUnique({where:{mobile}}):null;if(mobileUser&&mobileUser.id!==emailUser?.id)throw new AppError('An account already exists with this mobile number.',409);const otp=String(Math.floor(100000+Math.random()*900000));const row=await prisma.otpVerification.create({data:{identifier:email,purpose:'signup',codeHash:await bcrypt.hash(otp,10),pendingName:name||previous.pendingName,pendingMobile:mobile||previous.pendingMobile,pendingPasswordHash:password?await bcrypt.hash(password,12):previous.pendingPasswordHash,expiresAt:new Date(Date.now()+env.otpMinutes*60000)}});try{await sendOtpEmail(email,otp)}catch(error){await prisma.otpVerification.delete({where:{id:row.id}});throw error}ok(res,{expiresInSeconds:env.otpMinutes*60},'OTP sent to your email')});
 export const verifyOtp=asyncHandler(async(req,res)=>{const {email}=req.body;const row=await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'signup',consumedAt:null},orderBy:{createdAt:'desc'}});if(!row||row.expiresAt<new Date()||row.attempts>=5)throw new AppError('Invalid or expired OTP',401);if(!await bcrypt.compare(req.body.otp,row.codeHash)){await prisma.otpVerification.update({where:{id:row.id},data:{attempts:{increment:1}}});throw new AppError('Invalid or expired OTP',401)}const existing=await prisma.user.findUnique({where:{email}});if(existing?.passwordHash)throw new AppError('An account already exists with this email. Please sign in.',409);const user=await prisma.$transaction(async tx=>{await tx.otpVerification.update({where:{id:row.id},data:{consumedAt:new Date()}});return existing?tx.user.update({where:{id:existing.id},data:{name:row.pendingName,mobile:row.pendingMobile,passwordHash:row.pendingPasswordHash}}):tx.user.create({data:{email,name:row.pendingName,mobile:row.pendingMobile,passwordHash:row.pendingPasswordHash}})});ok(res,await issue(res,user),'Account created successfully')});
 export const requestPasswordReset=asyncHandler(async(req,res)=>{const {email}=req.body;const user=await prisma.user.findUnique({where:{email}});if(user?.role==='CUSTOMER'&&user.status==='ACTIVE'&&user.passwordHash){const otp=String(Math.floor(100000+Math.random()*900000));const row=await prisma.otpVerification.create({data:{identifier:email,purpose:'password_reset',codeHash:await bcrypt.hash(otp,10),expiresAt:new Date(Date.now()+env.otpMinutes*60000)}});try{await sendOtpEmail(email,otp,'password_reset')}catch(error){await prisma.otpVerification.delete({where:{id:row.id}});throw error}}ok(res,{expiresInSeconds:env.otpMinutes*60},'If an account exists for this email, a reset code has been sent.')});
-export const resetPassword=asyncHandler(async(req,res)=>{const {email,otp,password}=req.body;const row=await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'password_reset',consumedAt:null},orderBy:{createdAt:'desc'}});const user=await prisma.user.findUnique({where:{email}});if(!row||!user||user.role!=='CUSTOMER'||row.expiresAt<new Date()||row.attempts>=5)throw new AppError('Invalid or expired reset code',401);if(!await bcrypt.compare(otp,row.codeHash)){await prisma.otpVerification.update({where:{id:row.id},data:{attempts:{increment:1}}});throw new AppError('Invalid or expired reset code',401)}const passwordHash=await bcrypt.hash(password,12);await prisma.$transaction(async tx=>{await tx.otpVerification.update({where:{id:row.id},data:{consumedAt:new Date()}});await tx.user.update({where:{id:user.id},data:{passwordHash}});await tx.refreshToken.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:new Date()}})});res.clearCookie('grocify_refresh',{path:'/api/v1/auth'});ok(res,null,'Password reset successfully')});
+export const resetPassword=asyncHandler(async(req,res)=>{const {email,otp,password}=req.body;const row=await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'password_reset',consumedAt:null},orderBy:{createdAt:'desc'}});const user=await prisma.user.findUnique({where:{email}});if(!row||!user||user.role!=='CUSTOMER'||row.expiresAt<new Date()||row.attempts>=5)throw new AppError('Invalid or expired reset code',401);if(!await bcrypt.compare(otp,row.codeHash)){await prisma.otpVerification.update({where:{id:row.id},data:{attempts:{increment:1}}});throw new AppError('Invalid or expired reset code',401)}const passwordHash=await bcrypt.hash(password,12);await prisma.$transaction(async tx=>{await tx.otpVerification.update({where:{id:row.id},data:{consumedAt:new Date()}});await tx.user.update({where:{id:user.id},data:{passwordHash}});await tx.refreshToken.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:new Date()}})});res.clearCookie('r2cart_refresh',{path:'/api/v1/auth'});ok(res,null,'Password reset successfully')});
 export const adminLogin=asyncHandler(async(req,res)=>{
   const rawIdentifier=String(req.body.identifier||req.body.email||req.body.mobile||req.body.deliveryStaffId||'').trim();
   const password=String(req.body.password||'');
@@ -207,7 +207,7 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     details:{email:user.email,role:user.staffRole||user.role}
   });
 
-  const cookieName='grocify_admin_refresh';
+  const cookieName='r2cart_admin_refresh';
   ok(res,await issue(res,user,{cookieName,cookiePath:'/'}),'Login successful');
 });
 
@@ -273,7 +273,7 @@ export const superAdminLogin=asyncHandler(async(req,res)=>{
     details:{email:user.email,portal:'SUPER_ADMIN',role:'SUPER_ADMIN'}
   });
 
-  ok(res,await issue(res,user,{cookieName:'grocify_admin_refresh',cookiePath:'/'}),'Super Admin login successful');
+  ok(res,await issue(res,user,{cookieName:'r2cart_admin_refresh',cookiePath:'/'}),'Super Admin login successful');
 });
 
 export const deliveryLogin=asyncHandler(async(req,res)=>{
@@ -342,16 +342,16 @@ export const deliveryLogin=asyncHandler(async(req,res)=>{
     details:{email:user.email,role:user.staffRole||user.role}
   });
 
-  ok(res,await issue(res,user,{cookieName:'grocify_delivery_refresh',cookiePath:'/'}),'Delivery login successful');
+  ok(res,await issue(res,user,{cookieName:'r2cart_delivery_refresh',cookiePath:'/'}),'Delivery login successful');
 });
 
 export const refresh = asyncHandler(async (req, res) => {
   const raw =
     req.body?.refreshToken ||
     req.headers['x-refresh-token'] ||
-    req.cookies?.grocify_refresh ||
-    req.cookies?.grocify_admin_refresh ||
-    req.cookies?.grocify_delivery_refresh;
+    req.cookies?.r2cart_refresh ||
+    req.cookies?.r2cart_admin_refresh ||
+    req.cookies?.r2cart_delivery_refresh || req.cookies?.grocify_refresh || req.cookies?.grocify_admin_refresh || req.cookies?.grocify_delivery_refresh;
   if (!raw) throw new AppError('Refresh token required', 401);
 
   let payload;
@@ -388,16 +388,19 @@ export const refresh = asyncHandler(async (req, res) => {
 
   const cookieName =
     stored.user.role === 'CUSTOMER'
-      ? 'grocify_refresh'
+      ? 'r2cart_refresh'
       : stored.user.role === 'DELIVERY_PERSON'
-      ? 'grocify_delivery_refresh'
-      : 'grocify_admin_refresh';
+      ? 'r2cart_delivery_refresh'
+      : 'r2cart_admin_refresh';
 
   ok(res, await issue(res, stored.user, { cookieName, cookiePath: '/' }), 'Session active');
 });
 export const logout=asyncHandler(async(req,res)=>{
- const raw=req.body?.refreshToken||req.headers['x-refresh-token']||req.cookies?.grocify_refresh||req.cookies?.grocify_admin_refresh||req.cookies?.grocify_delivery_refresh;
+ const raw=req.body?.refreshToken||req.headers['x-refresh-token']||req.cookies?.r2cart_refresh||req.cookies?.r2cart_admin_refresh||req.cookies?.r2cart_delivery_refresh || req.cookies?.grocify_refresh || req.cookies?.grocify_admin_refresh || req.cookies?.grocify_delivery_refresh;
  if(raw)await prisma.refreshToken.updateMany({where:{tokenHash:hashToken(raw)},data:{revokedAt:new Date()}});
+ res.clearCookie('r2cart_refresh',{path:'/'});
+ res.clearCookie('r2cart_admin_refresh',{path:'/'});
+ res.clearCookie('r2cart_delivery_refresh',{path:'/'});
  res.clearCookie('grocify_refresh',{path:'/'});
  res.clearCookie('grocify_admin_refresh',{path:'/'});
  res.clearCookie('grocify_delivery_refresh',{path:'/'});
