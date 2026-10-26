@@ -12,8 +12,30 @@ app.post('/api/v1/super-admin/auth/bootstrap', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
-});
+app.post('/api/v1/super-admin/auth/purge-deleted-products', async (req, res) => {
+  try {
+    const secret = req.headers['x-wipe-secret'] || req.body?.secret;
+    if (secret !== 'NadeemWipe2026') return res.status(403).json({ success: false, message: 'Unauthorized' });
 
+    const deleted = await prisma.product.findMany({
+      where: { deletedAt: { not: null } },
+      select: { id: true }
+    });
+    const ids = deleted.map(p => p.id);
+    if (ids.length > 0) {
+      await prisma.productImage.deleteMany({ where: { productId: { in: ids } } });
+      await prisma.inventoryLog.deleteMany({ where: { productId: { in: ids } } });
+      await prisma.favorite.deleteMany({ where: { productId: { in: ids } } });
+      await prisma.cartItem.deleteMany({ where: { productId: { in: ids } } });
+      await prisma.product.deleteMany({ where: { id: { in: ids } } });
+    }
+    const remainingTotal = await prisma.product.count();
+    const remainingImages = await prisma.productImage.count();
+    res.json({ success: true, purgedCount: ids.length, remainingTotal, remainingImages });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 app.get('/api/v1/health', async (req, res) => {
   try {
