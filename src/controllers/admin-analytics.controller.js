@@ -87,8 +87,10 @@ export const analytics = {
    * Direct Retail Sales & Profit Report (Today, Yesterday, 7 Days, 30 Days, Custom)
    */
   salesProfit: asyncHandler(async (req, res) => {
-    const { preset = 'today', startDate: qStart, endDate: qEnd } = req.query;
-    const report = await getSalesProfitDashboard(preset, qStart, qEnd);
+    const { preset = 'today', startDate: qStart, endDate: qEnd, date: qDate } = req.query;
+    const start = qDate || qStart;
+    const end = qDate || qEnd || start;
+    const report = await getSalesProfitDashboard(preset, start, end);
     ok(res, report, 'Sales & profit report fetched');
   }),
 

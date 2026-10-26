@@ -8,138 +8,155 @@ import { prisma } from '../config/prisma.js';
  * Inventory Valuation, Cash Flow reconciliation, and Smart Business Insights.
  */
 
-// Timezone offset for Asia/Kolkata is +05:30 (330 minutes)
-const KOLKATA_OFFSET_MS = 330 * 60 * 1000;
+// Helper functions for clean Asia/Kolkata calendar dates without offset distortion
+export function getISTDateString(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d); // Returns 'YYYY-MM-DD'
+}
+
+export function shiftDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+}
+
+export function formatISTDisplay(isoDateStr) {
+  const d = new Date(`${isoDateStr}T12:00:00Z`);
+  return d.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  });
+}
 
 /**
  * Returns UTC Date objects for start and end boundaries in Asia/Kolkata timezone,
  * alongside equivalent previous comparison period boundaries.
  */
 export function getReportingPeriodBounds(preset = 'thisMonth', customStart, customEnd, now = new Date()) {
-  const localNow = new Date(now.getTime() + KOLKATA_OFFSET_MS);
-  const year = localNow.getUTCFullYear();
-  const month = localNow.getUTCMonth(); // 0-indexed
-  const date = localNow.getUTCDate();
+  const todayStr = getISTDateString(now);
 
-  let startLocal, endLocal;
-  let prevStartLocal, prevEndLocal;
+  let startStr = todayStr;
+  let endStr = todayStr;
+  let prevStartStr = shiftDays(todayStr, -1);
+  let prevEndStr = shiftDays(todayStr, -1);
   let label = preset;
-
-  const startOfDay = (y, m, d) => new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
-  const endOfDay = (y, m, d) => new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
 
   switch (preset) {
     case 'today': {
-      startLocal = startOfDay(year, month, date);
-      endLocal = endOfDay(year, month, date);
-      // Previous period: yesterday
-      prevStartLocal = startOfDay(year, month, date - 1);
-      prevEndLocal = endOfDay(year, month, date - 1);
+      startStr = todayStr;
+      endStr = todayStr;
+      prevStartStr = shiftDays(todayStr, -1);
+      prevEndStr = shiftDays(todayStr, -1);
       label = 'Today';
       break;
     }
     case 'yesterday': {
-      startLocal = startOfDay(year, month, date - 1);
-      endLocal = endOfDay(year, month, date - 1);
-      prevStartLocal = startOfDay(year, month, date - 2);
-      prevEndLocal = endOfDay(year, month, date - 2);
+      startStr = shiftDays(todayStr, -1);
+      endStr = shiftDays(todayStr, -1);
+      prevStartStr = shiftDays(todayStr, -2);
+      prevEndStr = shiftDays(todayStr, -2);
       label = 'Yesterday';
       break;
     }
+    case 'singleDate':
+    case 'date': {
+      const target = customStart || todayStr;
+      startStr = target;
+      endStr = target;
+      prevStartStr = shiftDays(target, -1);
+      prevEndStr = shiftDays(target, -1);
+      label = target === todayStr ? 'Today' : (target === shiftDays(todayStr, -1) ? 'Yesterday' : target);
+      break;
+    }
     case 'last7days': {
-      startLocal = startOfDay(year, month, date - 6);
-      endLocal = endOfDay(year, month, date);
-      prevStartLocal = startOfDay(year, month, date - 13);
-      prevEndLocal = endOfDay(year, month, date - 7);
+      startStr = shiftDays(todayStr, -6);
+      endStr = todayStr;
+      prevStartStr = shiftDays(todayStr, -13);
+      prevEndStr = shiftDays(todayStr, -7);
       label = 'Last 7 Days';
       break;
     }
     case 'last30days': {
-      startLocal = startOfDay(year, month, date - 29);
-      endLocal = endOfDay(year, month, date);
-      prevStartLocal = startOfDay(year, month, date - 59);
-      prevEndLocal = endOfDay(year, month, date - 30);
+      startStr = shiftDays(todayStr, -29);
+      endStr = todayStr;
+      prevStartStr = shiftDays(todayStr, -59);
+      prevEndStr = shiftDays(todayStr, -30);
       label = 'Last 30 Days';
       break;
     }
     case 'lastMonth': {
-      // Previous calendar month
-      const prevMonthYear = month === 0 ? year - 1 : year;
-      const prevMonth = month === 0 ? 11 : month - 1;
-      const daysInPrevMonth = new Date(Date.UTC(prevMonthYear, prevMonth + 1, 0)).getUTCDate();
+      const [curY, curM] = todayStr.split('-').map(Number);
+      const prevM = curM === 1 ? 12 : curM - 1;
+      const prevY = curM === 1 ? curY - 1 : curY;
+      const daysInPrev = new Date(Date.UTC(prevY, prevM, 0)).getUTCDate();
+      const pMStr = String(prevM).padStart(2, '0');
+      startStr = `${prevY}-${pMStr}-01`;
+      endStr = `${prevY}-${pMStr}-${String(daysInPrev).padStart(2, '0')}`;
 
-      startLocal = startOfDay(prevMonthYear, prevMonth, 1);
-      endLocal = endOfDay(prevMonthYear, prevMonth, daysInPrevMonth);
-
-      // Equivalent prior month
-      const priorMonthYear = prevMonth === 0 ? prevMonthYear - 1 : prevMonthYear;
-      const priorMonth = prevMonth === 0 ? 11 : prevMonth - 1;
-      const daysInPriorMonth = new Date(Date.UTC(priorMonthYear, priorMonth + 1, 0)).getUTCDate();
-      prevStartLocal = startOfDay(priorMonthYear, priorMonth, 1);
-      prevEndLocal = endOfDay(priorMonthYear, priorMonth, daysInPriorMonth);
+      const priorM = prevM === 1 ? 12 : prevM - 1;
+      const priorY = prevM === 1 ? prevY - 1 : prevY;
+      const daysInPrior = new Date(Date.UTC(priorY, priorM, 0)).getUTCDate();
+      const prMStr = String(priorM).padStart(2, '0');
+      prevStartStr = `${priorY}-${prMStr}-01`;
+      prevEndStr = `${priorY}-${prMStr}-${String(daysInPrior).padStart(2, '0')}`;
       label = 'Previous Month';
       break;
     }
     case 'thisYear': {
-      startLocal = startOfDay(year, 0, 1);
-      endLocal = endOfDay(year, month, date);
-      prevStartLocal = startOfDay(year - 1, 0, 1);
-      prevEndLocal = endOfDay(year - 1, month, date);
+      const [curY] = todayStr.split('-').map(Number);
+      startStr = `${curY}-01-01`;
+      endStr = todayStr;
+      prevStartStr = `${curY - 1}-01-01`;
+      prevEndStr = shiftDays(`${curY - 1}-01-01`, 364);
       label = 'Current Year';
       break;
     }
     case 'custom': {
       if (customStart && customEnd) {
+        startStr = customStart;
+        endStr = customEnd;
         const [sy, sm, sd] = customStart.split('-').map(Number);
         const [ey, em, ed] = customEnd.split('-').map(Number);
-        startLocal = startOfDay(sy, sm - 1, sd);
-        endLocal = endOfDay(ey, em - 1, ed);
-
-        const durationMs = endLocal.getTime() - startLocal.getTime();
-        prevEndLocal = new Date(startLocal.getTime() - 1);
-        prevStartLocal = new Date(prevEndLocal.getTime() - durationMs);
+        const diffDays = Math.max(1, Math.round((new Date(Date.UTC(ey, em - 1, ed)) - new Date(Date.UTC(sy, sm - 1, sd))) / 86400000)) + 1;
+        prevEndStr = shiftDays(customStart, -1);
+        prevStartStr = shiftDays(prevEndStr, -(diffDays - 1));
         label = `${customStart} to ${customEnd}`;
       } else {
-        startLocal = startOfDay(year, month, 1);
-        endLocal = endOfDay(year, month, date);
-        prevStartLocal = startOfDay(year, month - 1, 1);
-        prevEndLocal = endOfDay(year, month - 1, date);
+        startStr = `${todayStr.slice(0, 7)}-01`;
+        endStr = todayStr;
+        prevStartStr = shiftDays(startStr, -30);
+        prevEndStr = shiftDays(startStr, -1);
         label = 'Current Month';
       }
       break;
     }
     case 'thisMonth':
     default: {
-      startLocal = startOfDay(year, month, 1);
-      endLocal = endOfDay(year, month, date);
-      // Previous month up to same relative day
-      const prevMonthYear = month === 0 ? year - 1 : year;
-      const prevMonth = month === 0 ? 11 : month - 1;
-      const daysInPrevMonth = new Date(Date.UTC(prevMonthYear, prevMonth + 1, 0)).getUTCDate();
-      const clampedDate = Math.min(date, daysInPrevMonth);
-
-      prevStartLocal = startOfDay(prevMonthYear, prevMonth, 1);
-      prevEndLocal = endOfDay(prevMonthYear, prevMonth, clampedDate);
+      startStr = `${todayStr.slice(0, 7)}-01`;
+      endStr = todayStr;
+      prevStartStr = shiftDays(startStr, -30);
+      prevEndStr = shiftDays(startStr, -1);
       label = 'Current Month';
       break;
     }
   }
 
-  // Convert local UTC representations to absolute UTC boundaries by subtracting offset
-  const startDate = new Date(startLocal.getTime() - KOLKATA_OFFSET_MS);
-  const endDate = new Date(endLocal.getTime() - KOLKATA_OFFSET_MS);
-  const prevStartDate = new Date(prevStartLocal.getTime() - KOLKATA_OFFSET_MS);
-  const prevEndDate = new Date(prevEndLocal.getTime() - KOLKATA_OFFSET_MS);
+  const startDate = new Date(`${startStr}T00:00:00.000Z`);
+  const endDate = new Date(`${endStr}T23:59:59.999Z`);
+  const prevStartDate = new Date(`${prevStartStr}T00:00:00.000Z`);
+  const prevEndDate = new Date(`${prevEndStr}T23:59:59.999Z`);
 
   return {
     preset,
     label,
+    startDateStr: startStr,
+    endDateStr: endStr,
     startDate,
     endDate,
     prevStartDate,
     prevEndDate,
-    startFormatted: startDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }),
-    endFormatted: endDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })
+    startFormatted: formatISTDisplay(startStr),
+    endFormatted: formatISTDisplay(endStr)
   };
 }
 
@@ -276,12 +293,15 @@ export async function buildSalesTrendSeries(startDate, endDate) {
   const dayMap = new Map();
 
   for (const order of deliveredOrders) {
-    const localDate = new Date(order.createdAt.getTime() + KOLKATA_OFFSET_MS);
-    const dayKey = localDate.toISOString().slice(0, 10); // YYYY-MM-DD
+    const dayKey = order.createdAt.toISOString().slice(0, 10); // YYYY-MM-DD
+    const dayLabel = new Date(`${dayKey}T12:00:00Z`).toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short'
+    });
 
     const current = dayMap.get(dayKey) || {
       date: dayKey,
-      label: new Date(order.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' }),
+      label: dayLabel,
       grossSales: 0,
       netSales: 0,
       cogs: 0,
@@ -664,7 +684,9 @@ export async function getSalesProfitDashboard(preset = 'today', customStart, cus
               mrp: true,
               price: true,
               unit: true,
-              images: { take: 1, orderBy: { position: 'asc' } }
+              stock: true,
+              images: { take: 1, orderBy: { position: 'asc' } },
+              category: { select: { id: true, name: true, slug: true } }
             }
           }
         }
@@ -682,10 +704,8 @@ export async function getSalesProfitDashboard(preset = 'today', customStart, cus
   const productMap = new Map();
 
   for (const order of deliveredOrders) {
-    const localDate = new Date(order.createdAt.getTime() + KOLKATA_OFFSET_MS);
-    const dayKey = localDate.toISOString().slice(0, 10);
-    const dayLabel = new Date(order.createdAt).toLocaleDateString('en-IN', {
-      timeZone: 'Asia/Kolkata',
+    const dayKey = order.createdAt.toISOString().slice(0, 10);
+    const dayLabel = new Date(`${dayKey}T12:00:00Z`).toLocaleDateString('en-IN', {
       day: 'numeric',
       month: 'short'
     });
@@ -729,6 +749,8 @@ export async function getSalesProfitDashboard(preset = 'today', customStart, cus
           sku: item.sku || '',
           name: item.name,
           unit: item.unit || '',
+          category: item.product?.category?.name || 'General',
+          currentStock: item.product?.stock ?? 0,
           image: item.image || item.product?.images?.[0]?.url || null,
           sellingPrice,
           costPrice,
