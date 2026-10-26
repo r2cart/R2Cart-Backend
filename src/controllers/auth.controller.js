@@ -345,16 +345,55 @@ export const deliveryLogin=asyncHandler(async(req,res)=>{
   ok(res,await issue(res,user,{cookieName:'grocify_delivery_refresh',cookiePath:'/'}),'Delivery login successful');
 });
 
-export const refresh=asyncHandler(async(req,res)=>{
- const raw=req.body?.refreshToken||req.headers['x-refresh-token']||req.cookies?.grocify_refresh||req.cookies?.grocify_admin_refresh||req.cookies?.grocify_delivery_refresh;
- if(!raw)throw new AppError('Refresh token required',401);
- let payload;
- try{payload=verifyRefresh(raw)}catch{throw new AppError('Refresh token expired',401)}
- const stored=await prisma.refreshToken.findUnique({where:{tokenHash:hashToken(raw)},include:{user:true}});
- if(!stored||stored.revokedAt||stored.expiresAt<new Date()||!['CUSTOMER','ADMIN','MANAGER','SUPER_ADMIN','DELIVERY_PERSON'].includes(stored.user.role))throw new AppError('Refresh token invalid',401);
- await prisma.refreshToken.update({where:{id:stored.id},data:{revokedAt:new Date()}});
- const cookieName=stored.user.role==='CUSTOMER'?'grocify_refresh':(stored.user.role==='DELIVERY_PERSON'?'grocify_delivery_refresh':'grocify_admin_refresh');
- ok(res,await issue(res,stored.user,{cookieName,cookiePath:'/'}),'Session active');
+export const refresh = asyncHandler(async (req, res) => {
+  const raw =
+    req.body?.refreshToken ||
+    req.headers['x-refresh-token'] ||
+    req.cookies?.grocify_refresh ||
+    req.cookies?.grocify_admin_refresh ||
+    req.cookies?.grocify_delivery_refresh;
+  if (!raw) throw new AppError('Refresh token required', 401);
+
+  let payload;
+  try {
+    payload = verifyRefresh(raw);
+  } catch {
+    throw new AppError('Refresh token expired', 401);
+  }
+
+  const stored = await prisma.refreshToken.findUnique({
+    where: { tokenHash: hashToken(raw) },
+    include: { user: true }
+  });
+
+  const now = new Date();
+  const graceWindowMs = 60 * 1000; // 60 seconds grace window for concurrent reconnects
+  const isWithinGrace = stored?.revokedAt && (now.getTime() - new Date(stored.revokedAt).getTime() < graceWindowMs);
+
+  if (
+    !stored ||
+    (stored.revokedAt && !isWithinGrace) ||
+    stored.expiresAt < now ||
+    !['CUSTOMER', 'ADMIN', 'MANAGER', 'SUPER_ADMIN', 'DELIVERY_PERSON'].includes(stored.user.role)
+  ) {
+    throw new AppError('Refresh token invalid', 401);
+  }
+
+  if (!stored.revokedAt) {
+    await prisma.refreshToken.update({
+      where: { id: stored.id },
+      data: { revokedAt: now }
+    }).catch(() => {});
+  }
+
+  const cookieName =
+    stored.user.role === 'CUSTOMER'
+      ? 'grocify_refresh'
+      : stored.user.role === 'DELIVERY_PERSON'
+      ? 'grocify_delivery_refresh'
+      : 'grocify_admin_refresh';
+
+  ok(res, await issue(res, stored.user, { cookieName, cookiePath: '/' }), 'Session active');
 });
 export const logout=asyncHandler(async(req,res)=>{
  const raw=req.body?.refreshToken||req.headers['x-refresh-token']||req.cookies?.grocify_refresh||req.cookies?.grocify_admin_refresh||req.cookies?.grocify_delivery_refresh;

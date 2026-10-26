@@ -98,37 +98,44 @@ export const deleteCustomer = asyncHandler(async (req, res) => {
     });
     const orderIds = customerOrders.map(o => o.id);
 
-    // 2. Cascade delete all dependencies linked to customer's orders
+    // 2. Parallel cascade delete all dependencies linked to customer's orders
     if (orderIds.length > 0) {
-      await tx.couponUsage.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.payment.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.deliveryProof.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.deliveryStatusLog.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.codCollection.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.deliveryChatMessage.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.deliveryAssignment.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.orderStatusHistory.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+      await Promise.all([
+        tx.couponUsage.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.payment.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.deliveryProof.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.deliveryStatusLog.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.codCollection.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.deliveryChatMessage.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.deliveryAssignment.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.orderStatusHistory.deleteMany({ where: { orderId: { in: orderIds } } }),
+        tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } })
+      ]);
       await tx.order.deleteMany({ where: { id: { in: orderIds } } });
     }
 
-    // 3. Delete all direct customer dependencies
-    await tx.ticketMessage.deleteMany({ where: { ticket: { userId: id } } });
-    await tx.supportTicket.deleteMany({ where: { userId: id } });
-    await tx.couponUsage.deleteMany({ where: { userId: id } });
-    await tx.productRating.deleteMany({ where: { userId: id } });
-    await tx.cartItem.deleteMany({ where: { cart: { userId: id } } });
-    await tx.cart.deleteMany({ where: { userId: id } });
-    await tx.favorite.deleteMany({ where: { userId: id } });
-    await tx.address.deleteMany({ where: { userId: id } });
-    await tx.refreshToken.deleteMany({ where: { userId: id } });
-    await tx.searchHistory.deleteMany({ where: { userId: id } });
-    await tx.pushSubscription.deleteMany({ where: { userId: id } });
-    await tx.deviceToken.deleteMany({ where: { userId: id } });
-    await tx.deliveryChatMessage.deleteMany({ where: { senderId: id } });
+    // 3. Parallel delete all direct customer dependencies
+    await Promise.all([
+      tx.ticketMessage.deleteMany({ where: { ticket: { userId: id } } }),
+      tx.supportTicket.deleteMany({ where: { userId: id } }),
+      tx.couponUsage.deleteMany({ where: { userId: id } }),
+      tx.productRating.deleteMany({ where: { userId: id } }),
+      tx.cartItem.deleteMany({ where: { cart: { userId: id } } }),
+      tx.cart.deleteMany({ where: { userId: id } }),
+      tx.favorite.deleteMany({ where: { userId: id } }),
+      tx.address.deleteMany({ where: { userId: id } }),
+      tx.refreshToken.deleteMany({ where: { userId: id } }),
+      tx.searchHistory.deleteMany({ where: { userId: id } }),
+      tx.pushSubscription.deleteMany({ where: { userId: id } }),
+      tx.deviceToken.deleteMany({ where: { userId: id } }),
+      tx.deliveryChatMessage.deleteMany({ where: { senderId: id } })
+    ]);
 
     // 4. Finally delete customer record from users table
     await tx.user.delete({ where: { id } });
+  }, {
+    maxWait: 15000,
+    timeout: 45000
   });
 
   ok(
