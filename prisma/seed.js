@@ -45,7 +45,7 @@ const products=[
  ['p14','Classic Salted Chips','snacks','90 g',50,45,48,'photo-1566478989037-eec170784d0b'],
  ['p15','Coca-Cola Soft Drink','beverages','750 ml',45,42,30,'photo-1629203851122-3726ecdf080e'],
  ['p16','Real Mixed Fruit Juice','beverages','1 L',125,109,21,'photo-1600271886742-f049cd451bba'],
- ['p17','Surf Excel Matic','household','2 kg',430,365,8,'photo-1585832770485-e68a5dbfad52'],
+ ['p17','Surf Excel Matic','cleaning-kitchen','2 kg',430,365,8,'photo-1585832770485-e68a5dbfad52'],
  ['p18','Dove Cream Beauty Bar','personal','3 x 100 g',210,179,19,'photo-1600857544200-b2f666a9a2ec'],
  ['p19','Dove Daily Shine Shampoo','personal','340 ml',325,279,0,'photo-1598440947619-2c35fc9aa908'],
  ['p20','Maggi Masala Noodles','instant','12 x 70 g',168,154,60,'photo-1612929633738-8fe44f7ec841',1]
@@ -57,7 +57,7 @@ const bannerData=[
  ['MONTHLY SAVINGS','Fill your pantry for less.','Value packs on atta, rice and dals','/category/staples',2,'photo-1586201375761-83865001e31c','Stock up'],
  ['CRUNCH TIME','Snacks for every mood.','Chips, biscuits and more at special prices','/category/snacks',3,'photo-1566478989037-eec170784d0b','Grab snacks'],
  ['CHILL & SIP','Refreshment delivered chilled.','Juices and soft drinks for every gathering','/category/beverages',4,'photo-1544145945-f90425340c7e','Shop beverages'],
- ['CLEAN HOME','A brighter home, every day.','Save on trusted household essentials','/category/household',5,'photo-1585832770485-e68a5dbfad52','Clean & save'],
+ ['CLEAN HOME','A brighter home, every day.','Save on trusted household essentials','/category/cleaning-kitchen',5,'photo-1585832770485-e68a5dbfad52','Clean & save'],
  ['SELF CARE','Everyday care, made easy.','Personal care favourites delivered fast','/category/personal',6,'photo-1598440947619-2c35fc9aa908','Explore care'],
  ['BAKED FRESH','Fresh bakes for happy breaks.','Bread and bakery picks for your table','/category/bakery',7,'photo-1509440159596-0249088772ff','Shop bakery'],
  ['READY IN MINUTES','Quick meals for busy days.','Instant favourites whenever hunger strikes','/category/instant',8,'photo-1612929633738-8fe44f7ec841','Get cooking'],
