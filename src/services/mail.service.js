@@ -145,7 +145,7 @@ export async function sendOtpEmail(to, otp, purpose = 'signup') {
           <tr>
             <td style="background-color:#173a28;padding:24px 28px;">
               <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:900;letter-spacing:-0.5px;">R2<span style="color:#22c55e;">Cart</span></h1>
-              <p style="margin:4px 0 0;color:#9bc9ab;font-size:12px;">Fresh Groceries Delivered Fast</p>
+              <p style="margin:4px 0 0;color:#9bc9ab;font-size:12px;font-weight:600;">Daily Needs, Delivered Fresh</p>
             </td>
           </tr>
           <tr>
