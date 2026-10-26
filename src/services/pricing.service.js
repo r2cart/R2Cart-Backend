@@ -56,19 +56,31 @@ export async function resolveDeliveryRules(tx, area) {
 }
 
 export async function calculateCart(tx, userId, couponCode, rules) {
-  const cart = await tx.cart.findUnique({
-    where: { userId },
-    include: { items: { include: { product: { include: { images: { take: 1 } } } } } }
-  });
+  const [cart, storeSetting] = await Promise.all([
+    tx.cart.findUnique({
+      where: { userId },
+      include: { items: { include: { product: { include: { category: true, images: { take: 1 } } } } } }
+    }),
+    tx.storeSetting?.findUnique ? tx.storeSetting.findUnique({
+      where: { id: 1 },
+      select: { policies: true }
+    }).catch(() => null) : null
+  ]);
 
   if (!cart?.items.length) throw new AppError('Your cart is empty', 400);
 
-  // Auto-prune any inactive, deleted, or removed products from user cart so customer is never blocked by ghost items
+  const comingSoonCats = storeSetting?.policies?.homeLayout?.comingSoonCategories || [];
+
+  // Auto-prune any inactive, deleted, or removed products from user cart, or products in Coming Soon categories
   const invalidCartItemIds = [];
+  const comingSoonItemNames = [];
   const validItems = [];
   for (const item of cart.items) {
     if (!item.product || item.product.deletedAt || item.product.status !== 'ACTIVE') {
       invalidCartItemIds.push(item.id);
+    } else if (item.product.category?.slug && comingSoonCats.includes(item.product.category.slug)) {
+      invalidCartItemIds.push(item.id);
+      comingSoonItemNames.push(item.product.name);
     } else {
       validItems.push(item);
     }
@@ -78,6 +90,10 @@ export async function calculateCart(tx, userId, couponCode, rules) {
     await tx.cartItem.deleteMany({
       where: { id: { in: invalidCartItemIds } }
     }).catch(() => {});
+  }
+
+  if (comingSoonItemNames.length > 0) {
+    throw new AppError(`Cannot checkout: "${comingSoonItemNames.join(', ')}" belongs to a Coming Soon category and cannot be ordered yet. It has been removed from your basket.`, 400);
   }
 
   if (!validItems.length) {
