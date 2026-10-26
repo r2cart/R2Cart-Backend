@@ -282,6 +282,7 @@ adminRouter.post('/homepage-ranking/refresh-cache', authorizeSuperAdmin, adminRa
 // ==========================================
 // 14. BUSINESS ANALYTICS & PROFIT MANAGEMENT
 // ==========================================
+adminRouter.get('/analytics/sales-profit', authorizePermission('analytics.view', 'reports.view_financial'), analytics.salesProfit);
 adminRouter.get('/analytics/overview', authorizePermission('analytics.view', 'reports.view_financial'), analytics.overview);
 adminRouter.get('/analytics/sales-trend', authorizePermission('analytics.view', 'reports.view_financial'), analytics.salesTrend);
 adminRouter.get('/analytics/product-performance', authorizePermission('analytics.view', 'reports.view_financial'), analytics.productPerformance);

@@ -170,6 +170,7 @@ model Product {
   sku               String         @unique
   mrp               Decimal        @db.Decimal(10, 2)
   price             Decimal        @db.Decimal(10, 2)
+  costPrice         Decimal        @default(0) @db.Decimal(10, 2)
   stock             Int            @default(0)
   lowStockThreshold Int            @default(10)
   status            EntityStatus   @default(ACTIVE)
@@ -349,6 +350,7 @@ model OrderItem {
   image     String? @db.Text
   mrp       Decimal @db.Decimal(10, 2)
   price     Decimal @db.Decimal(10, 2)
+  costPrice Decimal @default(0) @db.Decimal(10, 2)
   quantity  Int
   order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product   Product @relation(fields: [productId], references: [id])

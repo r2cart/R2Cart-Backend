@@ -640,3 +640,157 @@ export async function getSmartBusinessInsights(startDate, endDate) {
     topExpenseCategories
   };
 }
+
+/**
+ * Direct Retail Sales & Profit Report
+ * Calculates delivered sales, purchase costs, net profit, margin %,
+ * day-by-day sales trend, and product-wise profit breakdown.
+ */
+export async function getSalesProfitDashboard(preset = 'today', customStart, customEnd) {
+  const bounds = getReportingPeriodBounds(preset, customStart, customEnd);
+  
+  const deliveredOrders = await prisma.order.findMany({
+    where: {
+      status: 'DELIVERED',
+      createdAt: { gte: bounds.startDate, lte: bounds.endDate }
+    },
+    include: {
+      items: {
+        include: {
+          product: {
+            select: {
+              id: true,
+              costPrice: true,
+              mrp: true,
+              price: true,
+              unit: true,
+              images: { take: 1, orderBy: { position: 'asc' } }
+            }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: 'asc' }
+  });
+
+  let totalOrders = deliveredOrders.length;
+  let totalUnits = 0;
+  let totalSales = 0;
+  let totalCost = 0;
+
+  const dayMap = new Map();
+  const productMap = new Map();
+
+  for (const order of deliveredOrders) {
+    const localDate = new Date(order.createdAt.getTime() + KOLKATA_OFFSET_MS);
+    const dayKey = localDate.toISOString().slice(0, 10);
+    const dayLabel = new Date(order.createdAt).toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: 'numeric',
+      month: 'short'
+    });
+
+    if (!dayMap.has(dayKey)) {
+      dayMap.set(dayKey, {
+        date: dayKey,
+        displayDate: dayLabel,
+        orders: 0,
+        sales: 0,
+        cost: 0,
+        profit: 0
+      });
+    }
+    const dayStat = dayMap.get(dayKey);
+    dayStat.orders += 1;
+
+    for (const item of order.items) {
+      const qty = item.quantity || 0;
+      const sellingPrice = Number(item.price || 0);
+      const itemCost = Number(item.costPrice || 0);
+      const fallbackCost = Number(item.product?.costPrice || 0);
+      const costPrice = itemCost > 0 ? itemCost : fallbackCost;
+
+      const lineSales = sellingPrice * qty;
+      const lineCost = costPrice * qty;
+      const lineProfit = lineSales - lineCost;
+
+      totalUnits += qty;
+      totalSales += lineSales;
+      totalCost += lineCost;
+
+      dayStat.sales += lineSales;
+      dayStat.cost += lineCost;
+      dayStat.profit += lineProfit;
+
+      const pKey = item.productId || item.sku || item.name;
+      if (!productMap.has(pKey)) {
+        productMap.set(pKey, {
+          id: item.productId,
+          sku: item.sku || '',
+          name: item.name,
+          unit: item.unit || '',
+          image: item.image || item.product?.images?.[0]?.url || null,
+          sellingPrice,
+          costPrice,
+          mrp: Number(item.mrp || 0),
+          unitsSold: 0,
+          totalSales: 0,
+          totalCost: 0,
+          totalProfit: 0
+        });
+      }
+      const prodStat = productMap.get(pKey);
+      prodStat.unitsSold += qty;
+      prodStat.totalSales += lineSales;
+      prodStat.totalCost += lineCost;
+      prodStat.totalProfit += lineProfit;
+      if (prodStat.costPrice === 0 && costPrice > 0) prodStat.costPrice = costPrice;
+      if (prodStat.sellingPrice === 0 && sellingPrice > 0) prodStat.sellingPrice = sellingPrice;
+    }
+  }
+
+  totalSales = Number(totalSales.toFixed(2));
+  totalCost = Number(totalCost.toFixed(2));
+  const netProfit = Number((totalSales - totalCost).toFixed(2));
+  const marginPercent = totalSales > 0 ? Number(((netProfit / totalSales) * 100).toFixed(1)) : 0;
+
+  const dailySeries = [...dayMap.values()].map(d => ({
+    ...d,
+    sales: Number(d.sales.toFixed(2)),
+    cost: Number(d.cost.toFixed(2)),
+    profit: Number(d.profit.toFixed(2))
+  }));
+
+  const products = [...productMap.values()].map(p => {
+    const profit = Number(p.totalProfit.toFixed(2));
+    const sales = Number(p.totalSales.toFixed(2));
+    const cost = Number(p.totalCost.toFixed(2));
+    const margin = sales > 0 ? Number(((profit / sales) * 100).toFixed(1)) : 0;
+    const perPieceProfit = Number((p.sellingPrice - p.costPrice).toFixed(2));
+    return {
+      ...p,
+      sellingPrice: Number(p.sellingPrice.toFixed(2)),
+      costPrice: Number(p.costPrice.toFixed(2)),
+      perPieceProfit,
+      totalSales: sales,
+      totalCost: cost,
+      totalProfit: profit,
+      marginPercent: margin
+    };
+  }).sort((a, b) => b.totalProfit - a.totalProfit);
+
+  return {
+    period: bounds,
+    summary: {
+      totalOrders,
+      totalUnits,
+      totalSales,
+      totalCost,
+      netProfit,
+      marginPercent
+    },
+    dailySeries,
+    products
+  };
+}
+

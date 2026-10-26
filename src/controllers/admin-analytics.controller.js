@@ -8,7 +8,8 @@ import {
   getInventoryValuationReport,
   getCashFlowReport,
   getSupplierPayablesSummary,
-  getSmartBusinessInsights
+  getSmartBusinessInsights,
+  getSalesProfitDashboard
 } from '../services/analytics.service.js';
 import {
   recordOpeningStockCost,
@@ -80,6 +81,15 @@ export const analytics = {
       },
       insights
     }, 'Business analytics overview fetched');
+  }),
+
+  /**
+   * Direct Retail Sales & Profit Report (Today, Yesterday, 7 Days, 30 Days, Custom)
+   */
+  salesProfit: asyncHandler(async (req, res) => {
+    const { preset = 'today', startDate: qStart, endDate: qEnd } = req.query;
+    const report = await getSalesProfitDashboard(preset, qStart, qEnd);
+    ok(res, report, 'Sales & profit report fetched');
   }),
 
   /**
