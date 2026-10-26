@@ -59,6 +59,28 @@ async function sendMailViaRelay({to, subject, text, html, from}) {
 }
 
 async function sendMail({to, subject, text, html}) {
+  const resend = getResend();
+  if (resend) {
+    try {
+      const fromEmail = env.resendFrom || 'R2Cart <otp@r2cart.in>';
+      const targetEmails = Array.isArray(to) ? to : [to];
+      const result = await resend.emails.send({
+        from: fromEmail,
+        to: targetEmails,
+        subject,
+        text,
+        html,
+      });
+      if (result.error) {
+        console.warn('Resend returned error, falling back:', result.error);
+        throw new Error(result.error.message || 'Resend send failed');
+      }
+      return result.data;
+    } catch (resendErr) {
+      console.warn('Resend send failed, trying relay/transporter fallback:', resendErr.message);
+    }
+  }
+
   try {
     return await sendMailViaRelay({to, subject, text, html});
   } catch (relayError) {
