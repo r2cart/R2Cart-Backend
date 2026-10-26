@@ -12,6 +12,8 @@ app.post('/api/v1/super-admin/auth/bootstrap', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
+});
+
 app.post('/api/v1/super-admin/auth/purge-deleted-products', async (req, res) => {
   try {
     const secret = req.headers['x-wipe-secret'] || req.body?.secret;
