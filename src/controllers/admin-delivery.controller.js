@@ -237,9 +237,18 @@ export const villages = {
     let updatedCount = 0;
     const errors = [];
 
-    // Find all areas for auto-linking zone by name
-    const allAreas = await prisma.deliveryArea.findMany({ select: { id: true, name: true } });
-    const areaMap = new Map(allAreas.map(a => [a.name.trim().toLowerCase(), a.id]));
+    // Find all existing delivery areas
+    const allAreas = await prisma.deliveryArea.findMany({ select: { id: true, name: true, pincodes: true } });
+    const areaMap = new Map();
+    const areaLocalitiesMap = new Map();
+
+    allAreas.forEach(a => {
+      areaMap.set(a.name.trim().toLowerCase(), a.id);
+      const existingLocs = Array.isArray(a.pincodes)
+        ? a.pincodes.map(v => typeof v === 'string' ? v.trim() : (v?.name || '').trim()).filter(Boolean)
+        : [];
+      areaLocalitiesMap.set(a.id, new Set(existingLocs));
+    });
 
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
@@ -249,8 +258,36 @@ export const villages = {
         continue;
       }
 
-      const zoneName = String(item.zoneName || item.zone || '').trim().toLowerCase();
-      const areaId = item.areaId || (zoneName ? areaMap.get(zoneName) : null) || null;
+      // Resolve Zone Name (from row, or default Hathua)
+      const rawZoneName = String(item.zoneName || item.zone || item.areaName || req.body.defaultZoneName || 'Hathua').trim();
+      const zoneKey = rawZoneName.toLowerCase();
+
+      let areaId = item.areaId || (zoneKey ? areaMap.get(zoneKey) : null);
+
+      // If zone does not exist yet, AUTO-CREATE IT so villages belong to the zone!
+      if (!areaId && rawZoneName) {
+        const newArea = await prisma.deliveryArea.create({
+          data: {
+            name: rawZoneName,
+            pincodes: [name],
+            radiusKm: 5.0,
+            minimumOrder: 150,
+            deliveryFee: 30,
+            freeDeliveryThreshold: 499,
+            estimatedMinutes: 30,
+            status: 'ACTIVE',
+            isPaused: false
+          }
+        });
+        areaId = newArea.id;
+        areaMap.set(zoneKey, newArea.id);
+        areaLocalitiesMap.set(newArea.id, new Set([name]));
+      } else if (areaId) {
+        if (!areaLocalitiesMap.has(areaId)) {
+          areaLocalitiesMap.set(areaId, new Set());
+        }
+        areaLocalitiesMap.get(areaId).add(name);
+      }
 
       const fee = Number(item.deliveryFee);
       const minOrd = Number(item.minimumOrder);
@@ -293,6 +330,15 @@ export const villages = {
         });
         createdCount++;
       }
+    }
+
+    // Sync all touched DeliveryAreas with the complete list of localities
+    for (const [targetAreaId, localitiesSet] of areaLocalitiesMap.entries()) {
+      const mergedList = Array.from(localitiesSet).filter(Boolean);
+      await prisma.deliveryArea.update({
+        where: { id: targetAreaId },
+        data: { pincodes: mergedList }
+      });
     }
 
     logAudit(req, {
