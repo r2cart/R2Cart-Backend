@@ -26,50 +26,48 @@ app.post('/api/v1/super-admin/auth/wipe-test-data', async (req, res) => {
       select: { id: true, email: true, name: true, role: true }
     });
 
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.deliveryChatMessage.deleteMany({});
-      await tx.codCollection.deleteMany({});
-      await tx.codSettlement.deleteMany({});
-      await tx.deliveryProof.deleteMany({});
-      await tx.deliveryStatusLog.deleteMany({});
-      await tx.deliveryAssignment.deleteMany({});
-      await tx.orderFifoAllocation.deleteMany({});
-      await tx.ticketMessage.deleteMany({});
-      await tx.supportTicket.deleteMany({});
-      await tx.couponUsage.deleteMany({});
-      await tx.coupon.updateMany({ data: { usageCount: 0 } });
-      await tx.orderStatusHistory.deleteMany({});
-      await tx.orderItem.deleteMany({});
-      await tx.payment.deleteMany({});
-      const ordersDel = await tx.order.deleteMany({});
+    await prisma.deliveryChatMessage.deleteMany({});
+    await prisma.codCollection.deleteMany({});
+    await prisma.codSettlement.deleteMany({});
+    await prisma.deliveryProof.deleteMany({});
+    await prisma.deliveryStatusLog.deleteMany({});
+    await prisma.deliveryAssignment.deleteMany({});
+    await prisma.orderFifoAllocation.deleteMany({});
+    await prisma.ticketMessage.deleteMany({});
+    await prisma.supportTicket.deleteMany({});
+    await prisma.couponUsage.deleteMany({});
+    await prisma.coupon.updateMany({ data: { usageCount: 0 } });
+    await prisma.orderStatusHistory.deleteMany({});
+    await prisma.orderItem.deleteMany({});
+    await prisma.payment.deleteMany({});
+    const ordersDel = await prisma.order.deleteMany({});
 
-      const customerIds = (await tx.user.findMany({
-        where: { role: { in: ['CUSTOMER', 'DELIVERY_PERSON'] } },
-        select: { id: true }
-      })).map(u => u.id);
+    const customerIds = (await prisma.user.findMany({
+      where: { role: { in: ['CUSTOMER', 'DELIVERY_PERSON'] } },
+      select: { id: true }
+    })).map(u => u.id);
 
-      await tx.cartItem.deleteMany({ where: { cart: { userId: { in: customerIds } } } });
-      await tx.cart.deleteMany({ where: { userId: { in: customerIds } } });
-      await tx.address.deleteMany({ where: { userId: { in: customerIds } } });
-      await tx.favorite.deleteMany({ where: { userId: { in: customerIds } } });
-      await tx.productRating.deleteMany({ where: { userId: { in: customerIds } } });
-      await tx.searchHistory.deleteMany({ where: { userId: { in: customerIds } } });
-      await tx.refreshToken.deleteMany({ where: { userId: { in: customerIds } } });
-      await tx.pushSubscription.deleteMany({ where: { userId: { in: customerIds } } });
-      await tx.deviceToken.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.cartItem.deleteMany({ where: { cart: { userId: { in: customerIds } } } });
+    await prisma.cart.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.address.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.favorite.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.productRating.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.searchHistory.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.refreshToken.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.pushSubscription.deleteMany({ where: { userId: { in: customerIds } } });
+    await prisma.deviceToken.deleteMany({ where: { userId: { in: customerIds } } });
 
-      const usersDel = await tx.user.deleteMany({
-        where: { role: { in: ['CUSTOMER', 'DELIVERY_PERSON'] } }
-      });
-
-      await tx.otpVerification.deleteMany({});
-
-      return {
-        ordersDeleted: ordersDel.count,
-        nonAdminUsersDeleted: usersDel.count,
-        preservedAdmin: adminUsers
-      };
+    const usersDel = await prisma.user.deleteMany({
+      where: { role: { in: ['CUSTOMER', 'DELIVERY_PERSON'] } }
     });
+
+    await prisma.otpVerification.deleteMany({});
+
+    const result = {
+      ordersDeleted: ordersDel.count,
+      nonAdminUsersDeleted: usersDel.count,
+      preservedAdmin: adminUsers
+    };
 
     res.json({ success: true, message: 'Live database wiped successfully', result });
   } catch (err) {
