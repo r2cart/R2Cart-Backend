@@ -69,6 +69,7 @@ adminRouter.post(
   a.uploadProductImage
 );
 adminRouter.post('/products', authorizePermission('products.create'), a.products.create);
+adminRouter.get('/products/export', authorizePermission('products.view'), productImport.exportData);
 adminRouter.post('/products/import/preview', authorizePermission('products.create'), productImport.preview);
 adminRouter.post('/products/import', authorizePermission('products.create'), productImport.save);
 adminRouter.get('/products', authorizePermission('products.view'), adminProducts.list);
