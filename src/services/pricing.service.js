@@ -63,23 +63,45 @@ export async function calculateCart(tx, userId, couponCode, rules) {
 
   if (!cart?.items.length) throw new AppError('Your cart is empty', 400);
 
+  // Auto-prune any inactive, deleted, or removed products from user cart so customer is never blocked by ghost items
+  const invalidCartItemIds = [];
+  const validItems = [];
+  for (const item of cart.items) {
+    if (!item.product || item.product.deletedAt || item.product.status !== 'ACTIVE') {
+      invalidCartItemIds.push(item.id);
+    } else {
+      validItems.push(item);
+    }
+  }
+
+  if (invalidCartItemIds.length > 0) {
+    await tx.cartItem.deleteMany({
+      where: { id: { in: invalidCartItemIds } }
+    });
+  }
+
+  if (!validItems.length) {
+    throw new AppError('The items previously in your cart are no longer available. Please select from our active catalogue.', 400);
+  }
+
+  cart.items = validItems;
+
   let itemTotal = 0;
   let subtotal = 0;
   const now = new Date();
 
   for (const item of cart.items) {
-    if (!item.product || item.product.deletedAt || item.product.status !== 'ACTIVE' || item.product.stock < item.quantity) {
-      if (!item.product || item.product.deletedAt || item.product.status !== 'ACTIVE') {
-        throw new AppError(`${item.product?.name || 'Item'} is currently unavailable`, 409);
-      }
+    if (item.product.stock < item.quantity) {
       if (item.product.stock <= 0) {
-        throw new AppError(`${item.product.name} is currently out of stock`, 409);
+        await tx.cartItem.deleteMany({ where: { id: item.id } }).catch(() => {});
+        throw new AppError(`${item.product.name} is currently out of stock and has been removed from your basket`, 409);
       }
       throw new AppError(`${item.product.name} has only ${item.product.stock} remaining in stock`, 409);
     }
 
     // Expiry date verification
     if (item.product.hasExpiry && item.product.expiryDate && new Date(item.product.expiryDate) <= now) {
+      await tx.cartItem.deleteMany({ where: { id: item.id } }).catch(() => {});
       throw new AppError(`Cannot checkout: "${item.product.name}" has reached its expiration date and has been removed from sale.`, 409);
     }
 

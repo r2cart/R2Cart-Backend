@@ -102,6 +102,27 @@ export const checkout=asyncHandler(async(req,res)=>{
     throw new AppError(`Cash on Delivery is currently unavailable for ${rules.villageName||address.area}.`,422);
   }
 
+  // If active items sent from client checkout, sync database cart to eliminate any stale ghost items
+  if (Array.isArray(req.body.items) && req.body.items.length > 0) {
+    const userCart = await prisma.cart.upsert({
+      where: { userId: req.user.id },
+      update: {},
+      create: { userId: req.user.id }
+    });
+    await prisma.cartItem.deleteMany({ where: { cartId: userCart.id } });
+    for (const itm of req.body.items) {
+      if (itm.productId && Number(itm.quantity) > 0) {
+        await prisma.cartItem.create({
+          data: {
+            cartId: userCart.id,
+            productId: itm.productId,
+            quantity: Number(itm.quantity)
+          }
+        }).catch(() => {});
+      }
+    }
+  }
+
   const addressSnapshot={id:address.id,name:address.name,fullName:address.name,mobile:address.mobile,house:address.house,street:address.street||'',landmark:address.landmark||'',area:address.area,villageName:rules.villageName||address.area,villageId:rules.villageId||rules.zoneId||null,city:address.city,district:address.district||'',state:address.state||'',pin:address.pin||'',pincode:address.pin||'',type:address.type||'Home',deliveryZone:{id:rules.villageId||rules.zoneId,name:rules.villageName||rules.zoneName,estimatedDelivery:rules.estimatedDelivery}};
   const result=await prisma.$transaction(async tx=>{const t=await calculateCart(tx,req.user.id,req.body.couponCode,rules);const order=await tx.order.create({data:{orderNumber:orderNumber(),userId:req.user.id,couponId:t.coupon?.id||null,status:'NEW',paymentMethod:'COD',paymentStatus:'PENDING',itemTotal:t.itemTotal,productDiscount:t.productDiscount,couponDiscount:t.couponDiscount,deliveryFee:t.deliveryFee,handlingFee:t.handlingFee,grandTotal:t.grandTotal,addressSnapshot,deliveryInstruction:req.body.deliveryInstruction||null,deliveryType,deliveryDate,deliverySlot,items:{create:t.cart.items.map(i=>({productId:i.productId,name:i.product.name,sku:i.product.sku,unit:i.product.unit,image:i.product.images[0]?.url||null,mrp:i.product.mrp,price:i.product.price,quantity:i.quantity}))},history:{create:{status:'NEW',note:deliveryType==='SCHEDULED'?`Order placed (Scheduled for ${deliveryDate}, ${deliverySlot})`:'Order placed'}},payment:{create:{method:'COD',status:'PENDING',amount:t.grandTotal}}},include:{items:true,history:true}});for(const item of t.cart.items){const current=await tx.product.findUnique({where:{id:item.productId},select:{id:true,name:true,stock:true}});if(!current||current.stock<item.quantity)throw new AppError(`Insufficient stock for ${current?.name||item.product?.name||'item'}. Only ${current?.stock||0} remaining.`,409);await tx.product.update({where:{id:item.productId},data:{stock:Math.max(0,current.stock-item.quantity)}});if(tx.inventoryLog?.create)await tx.inventoryLog.create({data:{productId:item.productId,type:'ORDER_DEDUCT',previousStock:current.stock,newStock:Math.max(0,current.stock-item.quantity),quantityDiff:-item.quantity,reason:`Order placed #${order.orderNumber}`,orderId:order.id}})}if(t.coupon){const willExhaust=t.coupon.usageLimit!==null&&(t.coupon.usageCount+1)>=t.coupon.usageLimit;await tx.coupon.update({where:{id:t.coupon.id},data:{usageCount:{increment:1},...(willExhaust?{status:'INACTIVE'}:{})}});await tx.couponUsage.create({data:{couponId:t.coupon.id,userId:req.user.id,orderId:order.id}})}await tx.cartItem.deleteMany({where:{cartId:t.cart.id}});return order},{maxWait:15000,timeout:30000});created(res,orderDto(result),'Order placed successfully');notifyAdminsNewOrder(result).catch(e=>console.error('Admin order push error:',e.message));notifyCustomerOrderPlaced(result).catch(e=>console.error('Customer order push error:',e.message));sendFcmToAdminsNewOrder(result).catch(e=>console.error('Admin FCM order push error:',e.message));sendFcmToCustomerOrderPlaced(result).catch(e=>console.error('Customer FCM order push error:',e.message))});
 export const orders={

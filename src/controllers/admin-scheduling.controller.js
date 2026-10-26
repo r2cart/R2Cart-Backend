@@ -609,6 +609,24 @@ export async function getAvailableCustomerSlots(targetDateStr) {
     });
   }
 
+  // Deduplicate slots by startTime and endTime to prevent double cards
+  const seenSlotKeys = new Set();
+  const duplicateSlotIds = [];
+  const uniqueSlots = [];
+  for (const s of slots) {
+    const key = `${s.startTime}-${s.endTime}`;
+    if (seenSlotKeys.has(key)) {
+      duplicateSlotIds.push(s.id);
+    } else {
+      seenSlotKeys.add(key);
+      uniqueSlots.push(s);
+    }
+  }
+  if (duplicateSlotIds.length > 0) {
+    prisma.deliverySlot.deleteMany({ where: { id: { in: duplicateSlotIds } } }).catch(() => {});
+  }
+  slots = uniqueSlots;
+
   const bookedCounts = await prisma.order.groupBy({
     by: ['deliverySlot'],
     where: {
