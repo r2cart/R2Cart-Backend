@@ -39,7 +39,8 @@ export const searchProducts=asyncHandler(async(req,res)=>{
 });
 
 export const products=asyncHandler(async(req,res)=>{
-  const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(50,Math.max(1,parseInt(req.query.limit,10)||20));
+  res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=120, stale-while-revalidate=300');
+  const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||20));
   if(req.query.q){
     const searchRes=await smartSearchProducts({
       q:req.query.q,
@@ -91,6 +92,7 @@ export const products=asyncHandler(async(req,res)=>{
 });
 
 export const product=asyncHandler(async(req,res)=>{
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
   const id = req.params.id;
   const row = await cache.getOrSet(`catalog:product:${id}`, () => catalogRepository.product(id), 600);
   if(!row)throw new AppError('Product not found',404);
