@@ -21,7 +21,8 @@ export async function consumeFifoBatches(tx, { orderId, orderNumber, items }) {
     let needed = Number(item.quantity);
     if (needed <= 0) continue;
 
-    const sellingPrice = Number(item.price);
+    // item is a CartItem: price lives on item.product.price, not item.price
+    const sellingPrice = Number(item.product?.price ?? item.price ?? 0);
 
     // Fetch active FIFO batches for this product ordered oldest first
     const activeBatches = await tx.fifoCostBatch.findMany({
