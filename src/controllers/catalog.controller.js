@@ -110,101 +110,106 @@ export const suggestions=asyncHandler(async(req,res)=>{
   ok(res,rows.map(r=>({id:r.id,name:r.name,unit:r.unit,price:Number(r.price),stock:r.stock,image:r.images?.[0]?.url||null})));
 });
 export const delivery=asyncHandler(async(req,res)=>{
-  const [areas,villages,settings,schedule]=await Promise.all([
-    prisma.deliveryArea.findMany({where:{status:'ACTIVE'}}),
-    prisma.deliveryVillage.findMany({where:{status:'ACTIVE'}}),
-    prisma.storeSetting.findUnique({where:{id:1}}),
-    resolveEffectiveStoreSchedule()
-  ]);
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
+  const cachedData = await cache.getOrSet('catalog:delivery', async () => {
+    const [areas,villages,settings,schedule]=await Promise.all([
+      prisma.deliveryArea.findMany({where:{status:'ACTIVE'}}),
+      prisma.deliveryVillage.findMany({where:{status:'ACTIVE'}}),
+      prisma.storeSetting.findUnique({where:{id:1}}),
+      resolveEffectiveStoreSchedule()
+    ]);
 
-  const activeEmergency = schedule?.isEmergencyActive ? schedule?.emergencyDetails : null;
-  const isEmergencyActive = Boolean(schedule?.isEmergencyActive);
-  const emergencyType = activeEmergency?.type;
-  const affectedList = (Array.isArray(activeEmergency?.affectedVillageIds) ? activeEmergency.affectedVillageIds : []).map(x => String(x).trim().toLowerCase());
-  const affectedSet = new Set(affectedList);
+    const activeEmergency = schedule?.isEmergencyActive ? schedule?.emergencyDetails : null;
+    const isEmergencyActive = Boolean(schedule?.isEmergencyActive);
+    const emergencyType = activeEmergency?.type;
+    const affectedList = (Array.isArray(activeEmergency?.affectedVillageIds) ? activeEmergency.affectedVillageIds : []).map(x => String(x).trim().toLowerCase());
+    const affectedSet = new Set(affectedList);
 
-  const activeVillages=villages.map(v=>{
-    const fee = v.deliveryFee !== null && v.deliveryFee !== undefined && v.deliveryFee !== ''
-      ? Number(v.deliveryFee)
-      : Number(settings?.deliveryFee || 20);
-    const minOrder = v.minimumOrder !== null && v.minimumOrder !== undefined && v.minimumOrder !== ''
-      ? Number(v.minimumOrder)
-      : Number(settings?.minimumOrder || 199);
-    const freeThresh = v.freeDeliveryThreshold !== null && v.freeDeliveryThreshold !== undefined && v.freeDeliveryThreshold !== ''
-      ? Number(v.freeDeliveryThreshold)
-      : Number(settings?.freeDeliveryThreshold || 499);
-    const estMins = v.estimatedMinutes ? Number(v.estimatedMinutes) : 30;
+    const activeVillages=villages.map(v=>{
+      const fee = v.deliveryFee !== null && v.deliveryFee !== undefined && v.deliveryFee !== ''
+        ? Number(v.deliveryFee)
+        : Number(settings?.deliveryFee || 20);
+      const minOrder = v.minimumOrder !== null && v.minimumOrder !== undefined && v.minimumOrder !== ''
+        ? Number(v.minimumOrder)
+        : Number(settings?.minimumOrder || 199);
+      const freeThresh = v.freeDeliveryThreshold !== null && v.freeDeliveryThreshold !== undefined && v.freeDeliveryThreshold !== ''
+        ? Number(v.freeDeliveryThreshold)
+        : Number(settings?.freeDeliveryThreshold || 499);
+      const estMins = v.estimatedMinutes ? Number(v.estimatedMinutes) : 30;
 
-    const isVillageSuspended = Boolean(
-      v.isPaused ||
-      (isEmergencyActive && (
-        emergencyType === 'ALL_ORDERS' ||
-        emergencyType === 'STORE_CLOSE' ||
-        (emergencyType === 'SELECTED_AREAS' && (
-          affectedSet.has(String(v.id).toLowerCase()) ||
-          affectedSet.has(String(v.name).toLowerCase())
+      const isVillageSuspended = Boolean(
+        v.isPaused ||
+        (isEmergencyActive && (
+          emergencyType === 'ALL_ORDERS' ||
+          emergencyType === 'STORE_CLOSE' ||
+          (emergencyType === 'SELECTED_AREAS' && (
+            affectedSet.has(String(v.id).toLowerCase()) ||
+            affectedSet.has(String(v.name).toLowerCase())
+          ))
         ))
-      ))
-    );
+      );
+
+      return {
+        id:v.id,
+        name:v.name,
+        pincode:v.pincode,
+        deliveryFee:fee,
+        minimumOrder:minOrder,
+        freeDeliveryThreshold:freeThresh,
+        radiusKm:Number(v.radiusKm||settings?.globalDeliveryRadius||5),
+        estimatedMinutes:estMins,
+        schedule:v.schedule,
+        allowCod:v.allowCod ?? true,
+        allowScheduled:v.allowScheduled ?? true,
+        isVillage:true,
+        isPaused:isVillageSuspended,
+        pauseReason:isVillageSuspended ? (activeEmergency?.message || v.notes || 'Deliveries to this village are temporarily paused.') : null
+      };
+    });
+
+    const activeAreas=areas.map(a=>{
+      const locs = Array.isArray(a.pincodes) ? a.pincodes : [];
+      const suspendedLocalities = locs.filter(loc => affectedSet.has(String(loc).trim().toLowerCase()));
+      const isAreaSuspended = Boolean(
+        a.isPaused ||
+        (isEmergencyActive && (
+          emergencyType === 'ALL_ORDERS' ||
+          emergencyType === 'STORE_CLOSE' ||
+          (emergencyType === 'SELECTED_AREAS' && (
+            affectedSet.has(String(a.id).toLowerCase()) ||
+            affectedSet.has(String(a.name).toLowerCase())
+          ))
+        ))
+      );
+
+      return {
+        id:a.id,
+        name:a.name,
+        localities:locs,
+        deliveryFee:Number(a.deliveryFee),
+        minimumOrder:Number(a.minimumOrder),
+        freeDeliveryThreshold:Number(a.freeDeliveryThreshold),
+        estimatedMinutes:a.estimatedMinutes,
+        radiusKm:Number(a.radiusKm||settings?.globalDeliveryRadius||5),
+        isVillage:false,
+        isPaused:isAreaSuspended,
+        pauseReason:isAreaSuspended ? (activeEmergency?.message || a.notes || 'Deliveries to this area are temporarily paused.') : null,
+        suspendedLocalities
+      };
+    });
 
     return {
-      id:v.id,
-      name:v.name,
-      pincode:v.pincode,
-      deliveryFee:fee,
-      minimumOrder:minOrder,
-      freeDeliveryThreshold:freeThresh,
-      radiusKm:Number(v.radiusKm||settings?.globalDeliveryRadius||5),
-      estimatedMinutes:estMins,
-      schedule:v.schedule,
-      allowCod:v.allowCod ?? true,
-      allowScheduled:v.allowScheduled ?? true,
-      isVillage:true,
-      isPaused:isVillageSuspended,
-      pauseReason:isVillageSuspended ? (activeEmergency?.message || v.notes || 'Deliveries to this village are temporarily paused.') : null
+      villages:activeVillages,
+      areas:activeAreas,
+      globalRadius:Number(settings?.globalDeliveryRadius||5.0),
+      minimumOrder:Number(settings?.minimumOrder||0),
+      deliveryFee:Number(settings?.deliveryFee||0),
+      freeDeliveryThreshold:Number(settings?.freeDeliveryThreshold||0),
+      estimatedDelivery:settings?.estimatedDelivery||'15-30 minutes'
     };
-  });
+  }, 180);
 
-  const activeAreas=areas.map(a=>{
-    const locs = Array.isArray(a.pincodes) ? a.pincodes : [];
-    const suspendedLocalities = locs.filter(loc => affectedSet.has(String(loc).trim().toLowerCase()));
-    const isAreaSuspended = Boolean(
-      a.isPaused ||
-      (isEmergencyActive && (
-        emergencyType === 'ALL_ORDERS' ||
-        emergencyType === 'STORE_CLOSE' ||
-        (emergencyType === 'SELECTED_AREAS' && (
-          affectedSet.has(String(a.id).toLowerCase()) ||
-          affectedSet.has(String(a.name).toLowerCase())
-        ))
-      ))
-    );
-
-    return {
-      id:a.id,
-      name:a.name,
-      localities:locs,
-      deliveryFee:Number(a.deliveryFee),
-      minimumOrder:Number(a.minimumOrder),
-      freeDeliveryThreshold:Number(a.freeDeliveryThreshold),
-      estimatedMinutes:a.estimatedMinutes,
-      radiusKm:Number(a.radiusKm||settings?.globalDeliveryRadius||5),
-      isVillage:false,
-      isPaused:isAreaSuspended,
-      pauseReason:isAreaSuspended ? (activeEmergency?.message || a.notes || 'Deliveries to this area are temporarily paused.') : null,
-      suspendedLocalities
-    };
-  });
-
-  ok(res,{
-    villages:activeVillages,
-    areas:activeAreas,
-    globalRadius:Number(settings?.globalDeliveryRadius||5.0),
-    minimumOrder:Number(settings?.minimumOrder||0),
-    deliveryFee:Number(settings?.deliveryFee||0),
-    freeDeliveryThreshold:Number(settings?.freeDeliveryThreshold||0),
-    estimatedDelivery:settings?.estimatedDelivery||'15-30 minutes'
-  });
+  ok(res, cachedData);
 });
 export const deliverySlots=asyncHandler(async(req,res)=>ok(res,await getAvailableCustomerSlots(req.query.date)));
 export const settings=asyncHandler(async(req,res)=>{
