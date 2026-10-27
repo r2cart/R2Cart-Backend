@@ -1,6 +1,7 @@
 import {prisma} from '../config/prisma.js';
 import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {logAudit} from '../services/audit.service.js';
+import {cache} from '../services/cache.service.js';
 
 const campaignData = (body) => {
   const name = String(body.name || '').trim();
@@ -81,6 +82,7 @@ export const marketing = {
       });
 
       created(res, campaign, 'Marketing campaign created');
+      cache.del('catalog:marketing:active');
     }),
 
     update: asyncHandler(async (req, res) => {
@@ -101,6 +103,7 @@ export const marketing = {
         details: { before: current, after: updated }
       });
 
+      cache.del('catalog:marketing:active');
       ok(res, updated, 'Marketing campaign updated');
     }),
 
@@ -221,25 +224,29 @@ export const marketing = {
 
   // Public customer endpoint for active announcements & popups
   publicActive: asyncHandler(async (req, res) => {
-    const now = new Date();
-    const active = await prisma.marketingCampaign.findMany({
-      where: {
-        status: 'ACTIVE',
-        startsAt: { lte: now },
-        expiresAt: { gte: now }
-      },
-      orderBy: [{ position: 'asc' }, { createdAt: 'desc' }]
-    });
+    const data = await cache.getOrSet('catalog:marketing:active', async () => {
+      const now = new Date();
+      const active = await prisma.marketingCampaign.findMany({
+        where: {
+          status: 'ACTIVE',
+          startsAt: { lte: now },
+          expiresAt: { gte: now }
+        },
+        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }]
+      });
 
-    const announcement = active.find(c => c.type === 'ANNOUNCEMENT_BAR') || null;
-    const popup = active.find(c => c.type === 'POPUP') || null;
-    const festivalOffers = active.filter(c => c.type === 'FESTIVAL' || c.type === 'DISCOUNT_DEAL');
+      const announcement = active.find(c => c.type === 'ANNOUNCEMENT_BAR') || null;
+      const popup = active.find(c => c.type === 'POPUP') || null;
+      const festivalOffers = active.filter(c => c.type === 'FESTIVAL' || c.type === 'DISCOUNT_DEAL');
 
-    ok(res, {
-      announcement,
-      popup,
-      festivalOffers
-    });
+      return {
+        announcement,
+        popup,
+        festivalOffers
+      };
+    }, 180);
+
+    ok(res, data);
   }),
 
   // Track impressions / clicks

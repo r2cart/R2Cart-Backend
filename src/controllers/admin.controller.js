@@ -11,6 +11,7 @@ import {deleteProduct,deleteAllProducts,deleteProductsByCategory} from '../servi
 import {couponData} from '../utils/coupon.js';
 import {uploadProductImage as uploadProductMedia,uploadMedia,relocateProductImage,isCloudinaryConfigured,productImagePublicId,deleteProductImage} from '../services/image.service.js';
 import {logAudit} from '../services/audit.service.js';
+import {invalidateProducts,invalidateCategories,invalidateBanners,invalidateSettings} from '../services/cache.service.js';
 
 const saveLocalFallback=(buffer,folder)=>{
  const dir=resolve(env.uploadDir,folder);
@@ -98,6 +99,7 @@ export const products={
    for(const pack of packs){const identifier=randomUUID();await tx.product.create({data:{...data,...pack,id:`p-${identifier}`,sku:`R2C-${identifier.replaceAll('-','').toUpperCase()}`,slug:`${slug.slice(0,150)}-${identifier}`,variantGroupId,categoryId:cat.id,images:imageCreateData}})}
    return base;
   });
+  invalidateProducts();
   created(res,productDto(saved),'Product and all pack sizes saved');
   logAudit(req, {
     module: 'PRODUCTS',
@@ -268,17 +270,19 @@ export const products={
     resourceName:updated.name,
     details:{name:updated.name,price:Number(updated.price),stock:updated.stock}
   });
+  invalidateProducts();
   ok(res,productDto(updated),'Product and all pack sizes updated');
  }),
- status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').trim().toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const product=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true}});if(!product)throw new AppError('Product not found',404);ok(res,productDto(await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude})),status==='ACTIVE'?'Product activated':'Product deactivated')}),
- remove:asyncHandler(async(req,res)=>{await deleteProduct(req.params.id);ok(res,null,'Product deleted; unused Cloudinary images removed')}),
- removeAll:asyncHandler(async(req,res)=>{const result=await deleteAllProducts();ok(res,result,`All ${result.count} products deleted successfully`)}),
-  removeByCategory:asyncHandler(async(req,res)=>{const result=await deleteProductsByCategory(req.params.categoryId);ok(res,result,`All ${result.count} products in ${result.categoryName||'category'} deleted successfully`)}),
+ status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').trim().toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const product=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true}});if(!product)throw new AppError('Product not found',404);const updatedProduct=await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude});invalidateProducts();ok(res,productDto(updatedProduct),status==='ACTIVE'?'Product activated':'Product deactivated')}),
+ remove:asyncHandler(async(req,res)=>{await deleteProduct(req.params.id);invalidateProducts();ok(res,null,'Product deleted; unused Cloudinary images removed')}),
+ removeAll:asyncHandler(async(req,res)=>{const result=await deleteAllProducts();invalidateProducts();ok(res,result,`All ${result.count} products deleted successfully`)}),
+  removeByCategory:asyncHandler(async(req,res)=>{const result=await deleteProductsByCategory(req.params.categoryId);invalidateProducts();ok(res,result,`All ${result.count} products in ${result.categoryName||'category'} deleted successfully`)}),
  stock:asyncHandler(async(req,res)=>{
   const current=await prisma.product.findUnique({where:{id:req.params.id}});if(!current||current.deletedAt)throw new AppError('Product not found',404);
   const stock=Number(req.body.stock),lowStockThreshold=req.body.lowStockThreshold===undefined?current.lowStockThreshold:Number(req.body.lowStockThreshold);
   if(req.body.stock===''||!Number.isInteger(stock)||stock<0||stock>2147483647||!Number.isInteger(lowStockThreshold)||lowStockThreshold<0||lowStockThreshold>2147483647)throw new AppError('Stock and threshold must be valid whole numbers',422);
   const product=await prisma.product.update({where:{id:req.params.id},data:{stock,lowStockThreshold},include:productInclude});
+  invalidateProducts();
   logAudit(req,{module:'INVENTORY',action:'STOCK_UPDATE',resourceId:product.id,resourceName:product.name,details:{previousStock:current.stock,newStock:stock,lowStockThreshold}});
   ok(res,{...productDto(product),stockStatus:stock===0?'OUT_OF_STOCK':stock<=lowStockThreshold?'LOW_STOCK':'IN_STOCK'},'Stock updated');
  })
@@ -295,7 +299,7 @@ const categoryData=body=>{
 const categoryInclude={parent:{select:{id:true,name:true}},children:{select:{id:true,name:true,status:true},orderBy:{position:'asc'}},_count:{select:{products:{where:{deletedAt:null}}}}};
 export const categories={
  list:asyncHandler(async(req,res)=>ok(res,await prisma.category.findMany({include:categoryInclude,orderBy:[{position:'asc'},{name:'asc'}]}))),
- create:asyncHandler(async(req,res)=>created(res,await prisma.category.create({data:categoryData(req.body),include:categoryInclude}),'Category created')),
+ create:asyncHandler(async(req,res)=>{const createdCat=await prisma.category.create({data:categoryData(req.body),include:categoryInclude});invalidateCategories();created(res,createdCat,'Category created')}),
  update:asyncHandler(async(req,res)=>{
   if(req.body.parentId===req.params.id)throw new AppError('A category cannot be its own parent',422);
   const existing=await prisma.category.findUnique({where:{id:req.params.id}});
@@ -308,6 +312,7 @@ export const categories={
       try{ await deleteProductImage(oldPubId); }catch(e){ console.warn('Old category image cleanup notice:', e.message); }
     }
   }
+  invalidateCategories();
   ok(res,updated,'Category updated');
  }),
  remove:asyncHandler(async(req,res)=>{
@@ -321,6 +326,7 @@ export const categories={
       try{ await deleteProductImage(oldPubId); }catch(e){ console.warn('Category image cleanup notice:', e.message); }
     }
   }
+  invalidateCategories();
   ok(res,null,'Category deleted');
  })
 };
@@ -340,10 +346,10 @@ const bannerData=body=>{
 };
 export const banners={
  list:asyncHandler(async(req,res)=>ok(res,await prisma.banner.findMany({orderBy:[{position:'asc'},{createdAt:'desc'}]}))),
- create:asyncHandler(async(req,res)=>created(res,await prisma.banner.create({data:bannerData(req.body)}),'Banner created')),
- update:asyncHandler(async(req,res)=>ok(res,await prisma.banner.update({where:{id:req.params.id},data:bannerData(req.body)}),'Banner updated')),
- status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);ok(res,await prisma.banner.update({where:{id:req.params.id},data:{status}}),status==='ACTIVE'?'Banner activated':'Banner deactivated')}),
- remove:asyncHandler(async(req,res)=>{await prisma.banner.delete({where:{id:req.params.id}});ok(res,null,'Banner permanently deleted')})
+ create:asyncHandler(async(req,res)=>{const b=await prisma.banner.create({data:bannerData(req.body)});invalidateBanners();created(res,b,'Banner created')}),
+ update:asyncHandler(async(req,res)=>{const b=await prisma.banner.update({where:{id:req.params.id},data:bannerData(req.body)});invalidateBanners();ok(res,b,'Banner updated')}),
+ status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const b=await prisma.banner.update({where:{id:req.params.id},data:{status}});invalidateBanners();ok(res,b,status==='ACTIVE'?'Banner activated':'Banner deactivated')}),
+ remove:asyncHandler(async(req,res)=>{await prisma.banner.delete({where:{id:req.params.id}});invalidateBanners();ok(res,null,'Banner permanently deleted')})
 };
 export const inventory=asyncHandler(async(req,res)=>{
  const rows=await prisma.product.findMany({where:{deletedAt:null},include:{category:true,images:{take:1}},orderBy:{stock:'asc'}});
@@ -365,13 +371,15 @@ export const delivery={
   const data={};for(const key of ['minimumOrder','deliveryFee','freeDeliveryThreshold']){const value=Number(req.body[key]);if(req.body[key]===''||req.body[key]==null||!Number.isFinite(value)||value<0)throw new AppError(`Enter a valid ${key}`,422);data[key]=value}
   data.estimatedDelivery=String(req.body.estimatedDelivery||'').trim();if(!data.estimatedDelivery)throw new AppError('Delivery estimate is required',422);
   if(!await prisma.storeSetting.findUnique({where:{id:1},select:{id:true}}))throw new AppError('Configure store settings first',409);
-  ok(res,await prisma.storeSetting.update({where:{id:1},data}),'Default delivery rules saved');
+  const updatedSetting=await prisma.storeSetting.update({where:{id:1},data});
+  invalidateSettings();
+  ok(res,updatedSetting,'Default delivery rules saved');
  }),
  list:asyncHandler(async(req,res)=>ok(res,(await prisma.deliveryArea.findMany({orderBy:{name:'asc'}})).map(deliveryView))),
- create:asyncHandler(async(req,res)=>created(res,deliveryView(await prisma.deliveryArea.create({data:deliveryData(req.body)})),'Delivery zone created')),
- update:asyncHandler(async(req,res)=>ok(res,deliveryView(await prisma.deliveryArea.update({where:{id:req.params.id},data:deliveryData(req.body)})),'Delivery zone updated')),
- status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);ok(res,deliveryView(await prisma.deliveryArea.update({where:{id:req.params.id},data:{status}})),status==='ACTIVE'?'Delivery zone activated':'Delivery zone paused')}),
- remove:asyncHandler(async(req,res)=>{await prisma.deliveryArea.delete({where:{id:req.params.id}});ok(res,null,'Delivery zone permanently deleted')})
+ create:asyncHandler(async(req,res)=>{const createdZone=deliveryView(await prisma.deliveryArea.create({data:deliveryData(req.body)}));invalidateSettings();created(res,createdZone,'Delivery zone created')}),
+ update:asyncHandler(async(req,res)=>{const updatedZone=deliveryView(await prisma.deliveryArea.update({where:{id:req.params.id},data:deliveryData(req.body)}));invalidateSettings();ok(res,updatedZone,'Delivery zone updated')}),
+ status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const updatedZone=deliveryView(await prisma.deliveryArea.update({where:{id:req.params.id},data:{status}}));invalidateSettings();ok(res,updatedZone,status==='ACTIVE'?'Delivery zone activated':'Delivery zone paused')}),
+ remove:asyncHandler(async(req,res)=>{await prisma.deliveryArea.delete({where:{id:req.params.id}});invalidateSettings();ok(res,null,'Delivery zone permanently deleted')})
 };
 export const support={
  list:asyncHandler(async(req,res)=>{
@@ -492,6 +500,7 @@ export const settings={
    where:{id:1},
    data:{policies:updatedPolicies}
   });
+  invalidateSettings();
   logAudit(req,{module:'SETTINGS',action:isPaused?'EMERGENCY_PAUSE_ACTIVATED':'EMERGENCY_PAUSE_DEACTIVATED',resourceId:'1',resourceName:'Emergency Pause',details:{isPaused,reason,message,resumesAt}});
   ok(res,updated,isPaused?'Store orders paused':'Store orders resumed');
  })

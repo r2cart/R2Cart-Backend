@@ -2,6 +2,7 @@ import {prisma} from '../config/prisma.js';
 import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
 import {logAudit} from '../services/audit.service.js';
+import {invalidateProducts} from '../services/cache.service.js';
 
 export const inventory = {
   overview: asyncHandler(async (req, res) => {
@@ -206,6 +207,7 @@ export const inventory = {
       }
     });
 
+    invalidateProducts();
     ok(res, {
       product: productDto(result.product),
       log: result.log
@@ -248,6 +250,7 @@ export const inventory = {
       }
     });
 
+    invalidateProducts();
     ok(res, productDto(updated), 'Product expiry configuration updated');
   }),
 

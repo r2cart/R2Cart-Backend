@@ -6,8 +6,18 @@ import {sendContactInquiryEmail} from '../services/mail.service.js';
 import {getAvailableCustomerSlots} from './admin-scheduling.controller.js';
 import {resolveEffectiveStoreSchedule} from '../services/store-operations.service.js';
 import {smartSearchProducts} from '../services/search.service.js';
-export const categories=asyncHandler(async(req,res)=>ok(res,await catalogRepository.categories()));
-export const banners=asyncHandler(async(req,res)=>ok(res,await catalogRepository.banners()));
+import {cache} from '../services/cache.service.js';
+
+export const categories=asyncHandler(async(req,res)=>{
+  const data = await cache.getOrSet('catalog:categories', () => catalogRepository.categories(), 900);
+  ok(res, data);
+});
+
+export const banners=asyncHandler(async(req,res)=>{
+  const data = await cache.getOrSet('catalog:banners', () => catalogRepository.banners(), 900);
+  ok(res, data);
+});
+
 export const searchProducts=asyncHandler(async(req,res)=>{
   const result=await smartSearchProducts({
     q:req.query.q,
@@ -25,6 +35,7 @@ export const searchProducts=asyncHandler(async(req,res)=>{
     pages:result.pages
   });
 });
+
 export const products=asyncHandler(async(req,res)=>{
   const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(50,Math.max(1,parseInt(req.query.limit,10)||20));
   if(req.query.q){
@@ -50,18 +61,39 @@ export const products=asyncHandler(async(req,res)=>{
       hasAvailable:searchRes.hasAvailable
     });
   }
-  const setting=await prisma.storeSetting?.findUnique?.({where:{id:1},select:{autoHideOutOfStock:true}});
+
+  const catKey = req.query.category || 'all';
+  const sortKey = req.query.sort || 'default';
+  const availKey = req.query.available || 'all';
+  const cacheKey = `catalog:products:${page}:${limit}:${catKey}:${sortKey}:${availKey}`;
+
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return ok(res, cached.data, 'Products fetched', cached.meta);
+  }
+
+  const setting = await cache.getOrSet('catalog:setting:stock', () => prisma.storeSetting?.findUnique?.({where:{id:1},select:{autoHideOutOfStock:true}}), 600);
   const hideOos=Boolean(setting?.autoHideOutOfStock);
-  // Inactive products are available only through authenticated admin endpoints.
   const where={deletedAt:null,status:'ACTIVE',...(req.query.category&&{category:{slug:req.query.category}}),...((req.query.available==='true'||hideOos)&&{stock:{gt:0}})};
   const orderBy=req.query.sort==='low'?{price:'asc'}:req.query.sort==='high'?{price:'desc'}:req.query.sort==='discount'?{featured:'desc'}:{bestSeller:'desc'};
   const include={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
   const [rows,total]=await Promise.all([prisma.product.findMany({where,include,orderBy,skip:(page-1)*limit,take:limit}),prisma.product.count({where})]);
   const groups=[...new Set(rows.map(row=>row.variantGroupId).filter(Boolean))];
   const packs=groups.length?await prisma.product.findMany({where:{deletedAt:null,status:'ACTIVE',variantGroupId:{in:groups}},include,orderBy:{price:'asc'}}):[];
-  ok(res,rows.map(row=>({...productDto(row),variants:row.variantGroupId?packs.filter(pack=>pack.variantGroupId===row.variantGroupId).map(productDto):[]})),'Products fetched',{page,limit,total,pages:Math.ceil(total/limit)});
+  const formattedRows = rows.map(row=>({...productDto(row),variants:row.variantGroupId?packs.filter(pack=>pack.variantGroupId===row.variantGroupId).map(productDto):[]}));
+  const meta = {page,limit,total,pages:Math.ceil(total/limit)};
+
+  cache.set(cacheKey, { data: formattedRows, meta }, 300);
+
+  ok(res,formattedRows,'Products fetched',meta);
 });
-export const product=asyncHandler(async(req,res)=>{const row=await catalogRepository.product(req.params.id);if(!row)throw new AppError('Product not found',404);ok(res,productDto(row))});
+
+export const product=asyncHandler(async(req,res)=>{
+  const id = req.params.id;
+  const row = await cache.getOrSet(`catalog:product:${id}`, () => catalogRepository.product(id), 600);
+  if(!row)throw new AppError('Product not found',404);
+  ok(res,productDto(row));
+});
 export const suggestions=asyncHandler(async(req,res)=>{
   const q=String(req.query.q||'').trim();
   if(!q)return ok(res,[]);
@@ -172,14 +204,17 @@ export const delivery=asyncHandler(async(req,res)=>{
 });
 export const deliverySlots=asyncHandler(async(req,res)=>ok(res,await getAvailableCustomerSlots(req.query.date)));
 export const settings=asyncHandler(async(req,res)=>{
-  const [setting, effectiveStatus] = await Promise.all([
-    prisma.storeSetting.findUnique({where:{id:1}}),
-    resolveEffectiveStoreSchedule()
-  ]);
-  ok(res, {
-    ...(setting || {}),
-    effectiveStatus
-  });
+  const cachedSettings = await cache.getOrSet('catalog:store-settings', async () => {
+    const [setting, effectiveStatus] = await Promise.all([
+      prisma.storeSetting.findUnique({where:{id:1}}),
+      resolveEffectiveStoreSchedule()
+    ]);
+    return {
+      ...(setting || {}),
+      effectiveStatus
+    };
+  }, 300);
+  ok(res, cachedSettings);
 });
 export const contactInquiry=asyncHandler(async(req,res)=>{
  const name=String(req.body.name||'').trim();

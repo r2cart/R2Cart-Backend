@@ -3,6 +3,7 @@ import {prisma} from '../config/prisma.js';
 import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
 import {variantData} from '../utils/variants.js';
+import {invalidateProducts} from '../services/cache.service.js';
 
 export const addVariant=asyncHandler(async(req,res)=>{
  const pack=variantData(req.body);
@@ -15,6 +16,7 @@ export const addVariant=asyncHandler(async(req,res)=>{
   const identifier=randomUUID();
   return tx.product.create({data:{...pack,id:`p-${identifier}`,sku:`R2C-${identifier.replaceAll('-','').toUpperCase()}`,slug:`${base.slug.slice(0,150)}-${identifier}`,variantGroupId:group,name:base.name,description:base.description,categoryId:base.categoryId,status:base.status,featured:base.featured,bestSeller:base.bestSeller,lowStockThreshold:base.lowStockThreshold,images:{create:base.images.map(image=>({url:image.url,alt:image.alt,position:image.position}))}},include:{category:true,images:true,ratings:true}});
  });
+ invalidateProducts();
  created(res,productDto(product),'Pack size added');
 });
 
