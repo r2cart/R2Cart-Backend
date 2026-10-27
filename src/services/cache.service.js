@@ -112,5 +112,6 @@ export const invalidateProducts = () => {
 export const invalidateSettings = () => {
   cache.del('catalog:store-settings');
   cache.del('catalog:delivery-zones');
+  cache.del('catalog:delivery');
 };
 export const invalidateAdminDashboard = () => cache.del('admin:dashboard');
