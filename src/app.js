@@ -14,6 +14,59 @@ app.post('/api/v1/super-admin/auth/bootstrap', async (req, res) => {
   }
 });
 
+app.post('/api/v1/super-admin/auth/clean-users', async (req, res) => {
+  try {
+    const secret = req.headers['x-wipe-secret'] || req.body?.secret;
+    if (secret !== 'NadeemWipe2026') return res.status(403).json({ success: false, message: 'Unauthorized' });
+
+    const allUsers = await prisma.user.findMany({
+      select: { id: true, email: true, mobile: true, name: true, role: true, staffRole: true, createdAt: true }
+    });
+
+    const superAdmins = allUsers.filter(u => u.role === 'SUPER_ADMIN' || u.staffRole === 'SUPER_ADMIN');
+    const targetUsersToDelete = allUsers.filter(u => u.role !== 'SUPER_ADMIN' && u.staffRole !== 'SUPER_ADMIN');
+    const targetUserIds = targetUsersToDelete.map(u => u.id);
+
+    if (targetUserIds.length > 0) {
+      await prisma.deliveryChatMessage.deleteMany({ where: { OR: [{ senderId: { in: targetUserIds } }, { recipientId: { in: targetUserIds } }] } }).catch(() => {});
+      await prisma.cartItem.deleteMany({ where: { cart: { userId: { in: targetUserIds } } } }).catch(() => {});
+      await prisma.cart.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.address.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.favorite.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.productRating.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.searchHistory.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.refreshToken.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.pushSubscription.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.deviceToken.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.ticketMessage.deleteMany({ where: { senderId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.supportTicket.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+      await prisma.couponUsage.deleteMany({ where: { userId: { in: targetUserIds } } }).catch(() => {});
+
+      await prisma.user.deleteMany({
+        where: { id: { in: targetUserIds } }
+      });
+    }
+
+    const otpsDeleted = await prisma.otpVerification.deleteMany({});
+
+    const remainingUsers = await prisma.user.findMany({
+      select: { id: true, email: true, mobile: true, name: true, role: true }
+    });
+
+    res.json({
+      success: true,
+      message: 'All non-admin users and OTP records wiped cleanly',
+      deletedUsersCount: targetUserIds.length,
+      deletedUsersList: targetUsersToDelete,
+      otpsDeletedCount: otpsDeleted.count,
+      remainingUsers
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
 
 app.get('/api/v1/health', async (req, res) => {
   try {
