@@ -54,20 +54,34 @@ export async function deleteProductImages(publicIds){
  }
 }
 
+export function optimizeCloudinaryUrl(url, options = {}) {
+  if (!url || typeof url !== 'string' || !url.includes('res.cloudinary.com')) return url;
+  if (url.includes('/f_auto') || url.includes('/q_auto')) return url;
+  const width = options.width ? `w_${options.width},` : '';
+  return url.replace('/image/upload/', `/image/upload/${width}f_auto,q_auto/`);
+}
+
 export async function uploadProductImage(source,categorySlug){
  configure();
  if(!source||(typeof source!=='string'&&!source.length))throw new AppError('Choose an image to upload',422);
  if(!/^[a-z0-9_-]+$/i.test(categorySlug||''))throw new AppError('Select a valid product category before uploading an image',422);
  const assetFolder=`R2Cart/Categories/${categorySlug}`;
+ const uploadOptions = {
+   resource_type: 'image',
+   asset_folder: assetFolder,
+   use_asset_folder_as_public_id_prefix: true,
+   transformation: [{ quality: 'auto', fetch_format: 'auto', width: 1000, crop: 'limit' }],
+   timeout: 60000
+ };
  try{
   if(typeof source==='string'&&/^https?:\/\//i.test(source)){
    const existingId=productImagePublicId(source);
    if(existingId)return {url:source,publicId:existingId};
-   const result=await cloudinary.uploader.upload(source,{resource_type:'image',asset_folder:assetFolder,use_asset_folder_as_public_id_prefix:true,timeout:60000});
+   const result=await cloudinary.uploader.upload(source, uploadOptions);
    return {url:result.secure_url,publicId:result.public_id};
   }
   const result=await new Promise((resolve,reject)=>{
-   const stream=cloudinary.uploader.upload_stream({resource_type:'image',asset_folder:assetFolder,use_asset_folder_as_public_id_prefix:true,timeout:60000},(error,result)=>error?reject(error):resolve(result));
+   const stream=cloudinary.uploader.upload_stream(uploadOptions,(error,result)=>error?reject(error):resolve(result));
    stream.end(source);
   });
   return {url:result.secure_url,publicId:result.public_id};
@@ -125,13 +139,20 @@ export async function uploadMedia(source,folder='General'){
  if(!source||(typeof source!=='string'&&!source.length))throw new AppError('Choose an image to upload',422);
  const cleanFolder=String(folder||'General').replace(/[^a-z0-9_-]/gi,'');
  const assetFolder=`R2Cart/${cleanFolder}`;
+ const uploadOptions = {
+   resource_type: 'image',
+   asset_folder: assetFolder,
+   use_asset_folder_as_public_id_prefix: true,
+   transformation: [{ quality: 'auto', fetch_format: 'auto', width: 1200, crop: 'limit' }],
+   timeout: 60000
+ };
  try{
   if(typeof source==='string'&&/^https?:\/\//i.test(source)){
-   const result=await cloudinary.uploader.upload(source,{resource_type:'image',asset_folder:assetFolder,use_asset_folder_as_public_id_prefix:true,timeout:60000});
+   const result=await cloudinary.uploader.upload(source, uploadOptions);
    return {url:result.secure_url,publicId:result.public_id};
   }
   const result=await new Promise((resolve,reject)=>{
-   const stream=cloudinary.uploader.upload_stream({resource_type:'image',asset_folder:assetFolder,use_asset_folder_as_public_id_prefix:true,timeout:60000},(error,result)=>error?reject(error):resolve(result));
+   const stream=cloudinary.uploader.upload_stream(uploadOptions,(error,result)=>error?reject(error):resolve(result));
    stream.end(source);
   });
   return {url:result.secure_url,publicId:result.public_id};
@@ -149,27 +170,23 @@ export async function uploadDeliveryProof(source, orderId, proofId) {
  const cleanProofId = String(proofId || Date.now()).replace(/[^a-z0-9_-]/gi, '');
  const assetFolder = `r2cart/delivery-proofs/${cleanOrderId}`;
  const publicId = `${assetFolder}/${cleanProofId}`;
+ const uploadOptions = {
+   resource_type: 'image',
+   public_id: publicId,
+   asset_folder: assetFolder,
+   overwrite: true,
+   transformation: [{ quality: 'auto', fetch_format: 'auto', width: 1000, crop: 'limit' }],
+   timeout: 60000
+ };
 
  try {
   if (typeof source === 'string' && /^https?:\/\//i.test(source)) {
-   const result = await cloudinary.uploader.upload(source, {
-    resource_type: 'image',
-    public_id: publicId,
-    asset_folder: assetFolder,
-    overwrite: true,
-    timeout: 60000
-   });
+   const result = await cloudinary.uploader.upload(source, uploadOptions);
    return { url: result.secure_url, publicId: result.public_id, format: result.format, bytes: result.bytes };
   }
   const result = await new Promise((resolve, reject) => {
    const stream = cloudinary.uploader.upload_stream(
-    {
-     resource_type: 'image',
-     public_id: publicId,
-     asset_folder: assetFolder,
-     overwrite: true,
-     timeout: 60000
-    },
+    uploadOptions,
     (error, result) => (error ? reject(error) : resolve(result))
    );
    stream.end(source);
@@ -181,15 +198,16 @@ export async function uploadDeliveryProof(source, orderId, proofId) {
 }
 
 export function getDeliveryProofUrl(publicId, fallbackUrl) {
- if (!publicId) return fallbackUrl;
+ if (!publicId) return optimizeCloudinaryUrl(fallbackUrl, { width: 900 });
  try {
   configure();
   return cloudinary.url(publicId, {
    sign_url: true,
    secure: true,
+   transformation: [{ quality: 'auto', fetch_format: 'auto', width: 900, crop: 'limit' }],
    expires_at: Math.floor(Date.now() / 1000) + 7200
   });
  } catch {
-  return fallbackUrl;
+  return optimizeCloudinaryUrl(fallbackUrl, { width: 900 });
  }
 }

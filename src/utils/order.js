@@ -1,9 +1,29 @@
 import {ratingSummary} from './variants.js';
+import {optimizeCloudinaryUrl} from '../services/image.service.js';
+
 export const orderNumber=()=>`GR${Date.now().toString().slice(-8)}${Math.floor(Math.random()*90+10)}`;
 export const ticketNumber=()=>`TKT${Date.now().toString().slice(-7)}`;
 export const moneyNumber=value=>Number(value||0);
-export function productDto(p){const {ratings,...product}=p;return {...product,...ratingSummary(ratings),mrp:moneyNumber(p.mrp),price:moneyNumber(p.price),costPrice:moneyNumber(p.costPrice),image:p.images?.[0]?.url||null,images:p.images?.map(x=>x.url)||[],category:p.category?.slug||p.categoryId,categorySlug:p.category?.slug||null,categoryName:p.category?.name||null}}
+
+export function productDto(p){
+  const {ratings,...product}=p;
+  const rawImage = p.images?.[0]?.url||null;
+  return {
+    ...product,
+    ...ratingSummary(ratings),
+    mrp:moneyNumber(p.mrp),
+    price:moneyNumber(p.price),
+    costPrice:moneyNumber(p.costPrice),
+    image:optimizeCloudinaryUrl(rawImage, { width: 800 }),
+    images:p.images?.map(x=>optimizeCloudinaryUrl(x.url, { width: 800 }))||[],
+    category:p.category?.slug||p.categoryId,
+    categorySlug:p.category?.slug||null,
+    categoryName:p.category?.name||null
+  };
+}
+
 const statusLabel={NEW:'New',CONFIRMED:'Confirmed',PACKING:'Packing',OUT_FOR_DELIVERY:'Out for Delivery',DELIVERED:'Delivered',CANCELLED:'Cancelled'};
+
 export function orderDto(o){
   let snap=o.addressSnapshot;
   if(typeof snap==='string'){try{snap=JSON.parse(snap)}catch{snap={}}}
@@ -43,7 +63,7 @@ export function orderDto(o){
     } : null,
     deliveryProof: proof ? {
       id: proof.id,
-      cloudinaryUrl: proof.cloudinaryUrl,
+      cloudinaryUrl: optimizeCloudinaryUrl(proof.cloudinaryUrl, { width: 900 }),
       recipientName: proof.recipientName || null,
       recipientPhone: proof.recipientPhone || null,
       notes: proof.notes || null,
@@ -52,6 +72,11 @@ export function orderDto(o){
     customer: snap.name || o.user?.name || 'Customer',
     mobile: snap.mobile || o.user?.mobile || null,
     address: snap,
-    items: o.items?.map(i => ({ ...i, mrp: moneyNumber(i.mrp), price: moneyNumber(i.price) }))
+    items: o.items?.map(i => ({
+      ...i,
+      image: optimizeCloudinaryUrl(i.image, { width: 400 }),
+      mrp: moneyNumber(i.mrp),
+      price: moneyNumber(i.price)
+    }))
   };
 }
