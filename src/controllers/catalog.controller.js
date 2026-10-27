@@ -9,11 +9,13 @@ import {smartSearchProducts} from '../services/search.service.js';
 import {cache} from '../services/cache.service.js';
 
 export const categories=asyncHandler(async(req,res)=>{
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
   const data = await cache.getOrSet('catalog:categories', () => catalogRepository.categories(), 900);
   ok(res, data);
 });
 
 export const banners=asyncHandler(async(req,res)=>{
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
   const data = await cache.getOrSet('catalog:banners', () => catalogRepository.banners(), 900);
   ok(res, data);
 });
@@ -204,6 +206,7 @@ export const delivery=asyncHandler(async(req,res)=>{
 });
 export const deliverySlots=asyncHandler(async(req,res)=>ok(res,await getAvailableCustomerSlots(req.query.date)));
 export const settings=asyncHandler(async(req,res)=>{
+  res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=120, stale-while-revalidate=300');
   const cachedSettings = await cache.getOrSet('catalog:store-settings', async () => {
     const [setting, effectiveStatus] = await Promise.all([
       prisma.storeSetting.findUnique({where:{id:1}}),

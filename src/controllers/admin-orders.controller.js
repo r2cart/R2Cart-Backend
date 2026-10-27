@@ -5,6 +5,7 @@ import {notifyCustomerOrderStatusUpdate} from '../services/notification.service.
 import {sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
 import {logAudit} from '../services/audit.service.js';
 import {reverseFifoAllocations} from '../services/fifo.service.js';
+import {invalidateAdminDashboard} from '../services/cache.service.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
@@ -104,6 +105,7 @@ export const orders={
    return tx.order.findUnique({where:{id:current.id},include});
   });
   ok(res,orderDto(row),'Order status updated');
+  invalidateAdminDashboard();
   logAudit(req, {
     module: 'ORDERS',
     action: status === 'CANCELLED' ? 'ORDER_CANCELLED' : 'ORDER_STATUS_UPDATE',
