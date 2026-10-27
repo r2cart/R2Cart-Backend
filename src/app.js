@@ -1,5 +1,10 @@
 import express from 'express';import cors from 'cors';import helmet from 'helmet';import morgan from 'morgan';import cookieParser from 'cookie-parser';import compression from 'compression';import {rateLimit} from 'express-rate-limit';import {resolve} from 'node:path';import {env} from './config/env.js';import {authRouter,adminAuthRouter,superAdminAuthRouter,deliveryAuthRouter} from './routes/auth.routes.js';import {catalogRouter} from './routes/catalog.routes.js';import {customerRouter} from './routes/customer.routes.js';import {adminRouter} from './routes/admin.routes.js';import {deliveryRouter} from './routes/delivery.routes.js';import {notificationRouter} from './routes/notification.routes.js';import {errorHandler,notFound} from './middleware/errors.js';
-const allowOrigin=(origin,done)=>{if(!origin||env.clientOrigins.includes(origin))return done(null,true);if(/\.netlify\.app$/.test(origin)||/\.vercel\.app$/.test(origin)||/r2cart\.in$/.test(origin))return done(null,true);if(env.nodeEnv!=='production'&&/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))return done(null,true);return done(new Error('Origin is not allowed by CORS'))};
+const allowOrigin=(origin,done)=>{
+  if(!origin||env.clientOrigins.includes(origin))return done(null,true);
+  if(/\.netlify\.app$/.test(origin)||/\.vercel\.app$/.test(origin)||/r2cart\.in$/.test(origin)||/\.onrender\.com$/.test(origin))return done(null,true);
+  if(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))return done(null,true);
+  return done(new Error('Origin is not allowed by CORS'));
+};
 import {prisma} from './config/prisma.js';
 import {ensureSuperAdminAccount} from './services/schema-guard.service.js';
 
