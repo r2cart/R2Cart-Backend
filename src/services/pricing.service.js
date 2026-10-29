@@ -70,15 +70,20 @@ export async function calculateCart(tx, userId, couponCode, rules) {
   if (!cart?.items.length) throw new AppError('Your cart is empty', 400);
 
   const comingSoonCats = storeSetting?.policies?.homeLayout?.comingSoonCategories || [];
+  const comingSoonProducts = storeSetting?.policies?.homeLayout?.comingSoonProducts || [];
 
-  // Auto-prune any inactive, deleted, or removed products from user cart, or products in Coming Soon categories
+  // Auto-prune any inactive, deleted, or removed products from user cart, or products in Coming Soon categories/products
   const invalidCartItemIds = [];
   const comingSoonItemNames = [];
   const validItems = [];
   for (const item of cart.items) {
+    const isCatSoon = item.product?.category?.slug && comingSoonCats.includes(item.product.category.slug);
+    const isProdSoon = item.product?.id && comingSoonProducts.includes(item.product.id);
+    const isItemSoon = isCatSoon || isProdSoon || Boolean(item.product?.isSoon);
+
     if (!item.product || item.product.deletedAt || item.product.status !== 'ACTIVE') {
       invalidCartItemIds.push(item.id);
-    } else if (item.product.category?.slug && comingSoonCats.includes(item.product.category.slug)) {
+    } else if (isItemSoon) {
       invalidCartItemIds.push(item.id);
       comingSoonItemNames.push(item.product.name);
     } else {
@@ -93,7 +98,7 @@ export async function calculateCart(tx, userId, couponCode, rules) {
   }
 
   if (comingSoonItemNames.length > 0) {
-    throw new AppError(`Cannot checkout: "${comingSoonItemNames.join(', ')}" belongs to a Coming Soon category and cannot be ordered yet. It has been removed from your basket.`, 400);
+    throw new AppError(`Cannot checkout: "${comingSoonItemNames.join(', ')}" is coming soon and cannot be ordered yet. It has been removed from your basket.`, 400);
   }
 
   if (!validItems.length) {

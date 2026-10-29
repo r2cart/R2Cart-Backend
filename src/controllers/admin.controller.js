@@ -285,6 +285,66 @@ export const products={
   invalidateProducts();
   logAudit(req,{module:'INVENTORY',action:'STOCK_UPDATE',resourceId:product.id,resourceName:product.name,details:{previousStock:current.stock,newStock:stock,lowStockThreshold}});
   ok(res,{...productDto(product),stockStatus:stock===0?'OUT_OF_STOCK':stock<=lowStockThreshold?'LOW_STOCK':'IN_STOCK'},'Stock updated');
+ }),
+ comingSoon:asyncHandler(async(req,res)=>{
+  const productId=req.params.id;
+  const currentProduct=await prisma.product.findUnique({where:{id:productId}});
+  if(!currentProduct||currentProduct.deletedAt)throw new AppError('Product not found',404);
+
+  const setting=await prisma.storeSetting.findUnique({where:{id:1}});
+  const policies=setting?.policies||{};
+  const homeLayout=policies.homeLayout||{};
+  const comingSoonProducts=new Set(homeLayout.comingSoonProducts||[]);
+
+  let isSoon=req.body.isSoon!==undefined?Boolean(req.body.isSoon):!comingSoonProducts.has(productId);
+
+  if(isSoon){
+    comingSoonProducts.add(productId);
+  }else{
+    comingSoonProducts.delete(productId);
+  }
+
+  const updatedList=Array.from(comingSoonProducts);
+  const updatedPolicies={
+    ...policies,
+    homeLayout:{
+      ...homeLayout,
+      comingSoonProducts:updatedList
+    }
+  };
+
+  await prisma.storeSetting.upsert({
+    where:{id:1},
+    update:{policies:updatedPolicies},
+    create:{
+      id:1,
+      storeName:'R2Cart',
+      contactNumber:'+91 80000 10001',
+      email:'support@r2cart.in',
+      address:'Hathua',
+      openingTime:'06:00',
+      closingTime:'22:00',
+      minimumOrder:0,
+      deliveryFee:0,
+      freeDeliveryThreshold:499,
+      estimatedDelivery:'15-25 mins',
+      notifications:{orders:true,stock:true,customers:true},
+      policies:updatedPolicies
+    }
+  });
+
+  invalidateSettings();
+  invalidateProducts();
+
+  logAudit(req,{
+    module:'PRODUCTS',
+    action:'PRODUCT_COMING_SOON_TOGGLE',
+    resourceId:productId,
+    resourceName:currentProduct.name,
+    details:{productId,isSoon,name:currentProduct.name}
+  });
+
+  ok(res,{id:productId,isSoon,comingSoonProducts:updatedList},isSoon?`"${currentProduct.name}" marked as Coming Soon`:`"${currentProduct.name}" marked as Available`);
  })
 };
 const categoryData=body=>{
@@ -473,6 +533,7 @@ export const settings={
   const globalDeliveryRadius=req.body.globalDeliveryRadius!==undefined?Math.max(0.1,Number(req.body.globalDeliveryRadius)||5.0):(current?.globalDeliveryRadius?Number(current.globalDeliveryRadius):5.0);
   const data={storeName:text('storeName','Store name'),logo:String(req.body.logo||'').trim()||null,contactNumber:text('contactNumber','Contact number'),email,address:text('address','Store address'),openingTime,closingTime,currency:String(req.body.currency||'INR').trim().toUpperCase(),minimumOrder:money('minimumOrder','Minimum order'),deliveryFee:money('deliveryFee','Delivery fee'),freeDeliveryThreshold:money('freeDeliveryThreshold','Free delivery threshold'),estimatedDelivery:text('estimatedDelivery','Estimated delivery'),globalDeliveryRadius,notifications:{orders:Boolean(notifications.orders),stock:Boolean(notifications.stock),customers:Boolean(notifications.customers)},policies};
   const savedSetting = await prisma.storeSetting.upsert({where:{id:1},update:data,create:{id:1,...data}});
+  invalidateSettings();
   logAudit(req,{module:'SETTINGS',action:'STORE_SETTINGS_UPDATE',resourceId:'1',resourceName:'Store Settings',details:{storeName:data.storeName,openingTime:data.openingTime,closingTime:data.closingTime,minimumOrder:data.minimumOrder,deliveryFee:data.deliveryFee,globalDeliveryRadius:data.globalDeliveryRadius}});
   ok(res,savedSetting,'Store settings saved');
  }),

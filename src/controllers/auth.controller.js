@@ -76,21 +76,14 @@ export const customerLogin=asyncHandler(async(req,res)=>{
     throw new AppError('Invalid email, mobile or password', 401);
   }
 
-  // Customer Login is strictly for Customers and Delivery Personnel
-  const isStoreOrSuperAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.role) || ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.staffRole);
-  if (isStoreOrSuperAdmin) {
-    logAudit(req, {
-      module: 'AUTH',
-      action: 'LOGIN_FAILED',
-      resourceName: rawIdentifier,
-      details: { attempted: rawIdentifier, reason: 'Staff attempted login through customer portal' }
-    });
-    throw new AppError('Invalid credentials or unauthorized access.', 401);
-  }
-
+  // Unified login support: Customers, Delivery Partners, and Store Admins can all sign in
   if (user.role === 'DELIVERY_PERSON') {
     if (user.isStaffActive === false || user.status !== 'ACTIVE') {
       throw new AppError('Your delivery account is currently deactivated. Please contact administrator.', 403);
+    }
+  } else if (['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.role)) {
+    if (user.isStaffActive === false || user.status !== 'ACTIVE') {
+      throw new AppError('Your staff account is currently deactivated. Please contact administrator.', 403);
     }
   } else {
     if (user.status !== 'ACTIVE') {
@@ -310,8 +303,8 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     throw new AppError('Invalid credentials or unauthorized access.', 401);
   }
 
-  const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(user.role) || ['ADMIN', 'MANAGER'].includes(user.staffRole);
-  if (!isAdminOrManager) {
+  const isStaff = ['ADMIN', 'MANAGER', 'DELIVERY_PERSON'].includes(user.role) || ['ADMIN', 'MANAGER', 'DELIVERY_PERSON'].includes(user.staffRole);
+  if (!isStaff) {
     logAudit(req,{
       module:'AUTH',
       action:'LOGIN_FAILED',
@@ -349,7 +342,8 @@ export const adminLogin=asyncHandler(async(req,res)=>{
     details:{email:user.email,role:user.staffRole||user.role}
   });
 
-  const cookieName='r2cart_admin_refresh';
+  const isDelivery = user.role === 'DELIVERY_PERSON' || user.staffRole === 'DELIVERY_PERSON';
+  const cookieName = isDelivery ? 'r2cart_delivery_refresh' : 'r2cart_admin_refresh';
   ok(res,await issue(res,user,{cookieName,cookiePath:'/'}),'Login successful');
 });
 
@@ -488,12 +482,17 @@ export const deliveryLogin=asyncHandler(async(req,res)=>{
 });
 
 export const refresh = asyncHandler(async (req, res) => {
-  const raw =
-    req.body?.refreshToken ||
-    req.headers['x-refresh-token'] ||
-    req.cookies?.r2cart_refresh ||
-    req.cookies?.r2cart_admin_refresh ||
-    req.cookies?.r2cart_delivery_refresh;
+  const role = req.body?.role || req.headers['x-auth-role'] || (req.baseUrl.includes('admin') ? 'ADMIN' : (req.baseUrl.includes('delivery') ? 'DELIVERY' : null));
+  let raw = req.body?.refreshToken || req.headers['x-refresh-token'];
+  if (!raw) {
+    if (role === 'ADMIN') {
+      raw = req.cookies?.r2cart_admin_refresh || req.cookies?.r2cart_refresh;
+    } else if (role === 'DELIVERY') {
+      raw = req.cookies?.r2cart_delivery_refresh || req.cookies?.r2cart_refresh;
+    } else {
+      raw = req.cookies?.r2cart_refresh || req.cookies?.r2cart_admin_refresh || req.cookies?.r2cart_delivery_refresh;
+    }
+  }
   if (!raw) throw new AppError('Refresh token required', 401);
 
   let payload;
