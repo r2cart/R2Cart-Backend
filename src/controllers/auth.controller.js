@@ -538,11 +538,34 @@ export const refresh = asyncHandler(async (req, res) => {
   ok(res, await issue(res, stored.user, { cookieName, cookiePath: '/' }), 'Session active');
 });
 export const logout=asyncHandler(async(req,res)=>{
- const raw=req.body?.refreshToken||req.headers['x-refresh-token']||req.cookies?.r2cart_refresh||req.cookies?.r2cart_admin_refresh||req.cookies?.r2cart_delivery_refresh;
- if(raw)await prisma.refreshToken.updateMany({where:{tokenHash:hashToken(raw)},data:{revokedAt:new Date()}});
- res.clearCookie('r2cart_refresh',{path:'/'});
- res.clearCookie('r2cart_admin_refresh',{path:'/'});
- res.clearCookie('r2cart_delivery_refresh',{path:'/'});
- ok(res,null,'Logged out');
+  const role = req.body?.role || req.headers['x-auth-role'];
+  const raw = req.body?.refreshToken || req.headers['x-refresh-token'];
+
+  if (raw) {
+    await prisma.refreshToken.updateMany({ where: { tokenHash: hashToken(raw) }, data: { revokedAt: new Date() } });
+  }
+
+  if (role === 'ADMIN') {
+    const adminToken = req.cookies?.r2cart_admin_refresh;
+    if (adminToken) await prisma.refreshToken.updateMany({ where: { tokenHash: hashToken(adminToken) }, data: { revokedAt: new Date() } });
+    res.clearCookie('r2cart_admin_refresh', { path: '/' });
+  } else if (role === 'DELIVERY') {
+    const delToken = req.cookies?.r2cart_delivery_refresh;
+    if (delToken) await prisma.refreshToken.updateMany({ where: { tokenHash: hashToken(delToken) }, data: { revokedAt: new Date() } });
+    res.clearCookie('r2cart_delivery_refresh', { path: '/' });
+  } else if (role === 'CUSTOMER') {
+    const custToken = req.cookies?.r2cart_refresh;
+    if (custToken) await prisma.refreshToken.updateMany({ where: { tokenHash: hashToken(custToken) }, data: { revokedAt: new Date() } });
+    res.clearCookie('r2cart_refresh', { path: '/' });
+  } else {
+    const all = [req.cookies?.r2cart_refresh, req.cookies?.r2cart_admin_refresh, req.cookies?.r2cart_delivery_refresh].filter(Boolean);
+    for (const t of all) {
+      await prisma.refreshToken.updateMany({ where: { tokenHash: hashToken(t) }, data: { revokedAt: new Date() } });
+    }
+    res.clearCookie('r2cart_refresh', { path: '/' });
+    res.clearCookie('r2cart_admin_refresh', { path: '/' });
+    res.clearCookie('r2cart_delivery_refresh', { path: '/' });
+  }
+  ok(res, null, 'Logged out');
 });
 export const me=asyncHandler(async(req,res)=>ok(res,publicUser(req.user)));
