@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { prisma } from '../config/prisma.js';
 import { AppError, asyncHandler, created, ok } from '../utils/response.js';
 import { logAudit } from '../services/audit.service.js';
@@ -784,7 +785,7 @@ export const adminDeliveryAssignments = {
 
     // Generate settlement identifier
     const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const randomSuffix = crypto.randomInt(1000, 10000);
     const settlementNumber = `SETTLE-${datePrefix}-${randomSuffix}`;
 
     const settlement = await prisma.$transaction(async (tx) => {

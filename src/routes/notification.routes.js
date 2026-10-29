@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { optionalAuthenticate } from '../middleware/auth.js';
+import { optionalAuthenticate, authenticate } from '../middleware/auth.js';
 import {
   getVapidPublicKey,
   subscribe,
@@ -12,10 +12,10 @@ import {
 export const notificationRouter = Router();
 
 notificationRouter.get('/vapid-public-key', getVapidPublicKey);
-notificationRouter.post('/subscribe', optionalAuthenticate, subscribe);
+notificationRouter.post('/subscribe', authenticate, subscribe);
 notificationRouter.post('/unsubscribe', unsubscribe);
-notificationRouter.post('/test', optionalAuthenticate, sendTestPush);
+notificationRouter.post('/test', authenticate, sendTestPush);
 
 // FCM device token registration
-notificationRouter.post('/fcm/token', optionalAuthenticate, registerFcmToken);
+notificationRouter.post('/fcm/token', authenticate, registerFcmToken);
 notificationRouter.delete('/fcm/token', unregisterFcmToken);

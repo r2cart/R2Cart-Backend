@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../config/prisma.js';
+import { env } from '../config/env.js';
 
 export async function ensureStoreSettingColumns() {
   try {
@@ -320,18 +321,26 @@ export async function ensureSuperAdminAccount() {
       return existingSuper;
     }
 
-    // 2. Only if NO Super Admin exists at all, bootstrap the initial default super@gmail.com / Super@123
-    console.log('[AuthBootstrap] No Super Admin found. Bootstrapping initial Super Admin (super@gmail.com)...');
-    const superPasswordHash = await bcrypt.hash('Super@123', 12);
+    // 2. Only if NO Super Admin exists at all, bootstrap using environment credentials
+    const initialEmail = (env.superAdminEmail || process.env.SUPER_ADMIN_EMAIL || process.env.INITIAL_SUPER_ADMIN_EMAIL || 'super@gmail.com').trim().toLowerCase();
+    const initialPassword = env.superAdminPassword || process.env.SUPER_ADMIN_PASSWORD || process.env.INITIAL_SUPER_ADMIN_PASSWORD;
+
+    if (!initialPassword) {
+      console.warn('[AuthBootstrap] No Super Admin found and SUPER_ADMIN_PASSWORD is not set in environment. Skipping initial Super Admin creation.');
+      return null;
+    }
+
+    console.log(`[AuthBootstrap] No Super Admin found. Bootstrapping initial Super Admin (${initialEmail})...`);
+    const superPasswordHash = await bcrypt.hash(initialPassword, 12);
 
     // Safely remove mobile '9876543211' from other users if any, to avoid unique collision
     await prisma.user.updateMany({
-      where: { mobile: '9876543211', email: { not: 'super@gmail.com' } },
+      where: { mobile: '9876543211', email: { not: initialEmail } },
       data: { mobile: null }
     }).catch(() => {});
 
     const superAdmin = await prisma.user.upsert({
-      where: { email: 'super@gmail.com' },
+      where: { email: initialEmail },
       update: {
         name: 'Platform Super Admin',
         role: 'SUPER_ADMIN',
@@ -342,7 +351,7 @@ export async function ensureSuperAdminAccount() {
       },
       create: {
         name: 'Platform Super Admin',
-        email: 'super@gmail.com',
+        email: initialEmail,
         mobile: null,
         passwordHash: superPasswordHash,
         role: 'SUPER_ADMIN',

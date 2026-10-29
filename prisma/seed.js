@@ -19,43 +19,53 @@ const prisma = new PrismaClient();
 export async function seedIfEmpty() {
   console.log('[Startup] Checking platform bootstrap status...');
 
-  // 1. Admin accounts - always upsert so credentials stay consistent.
-  const adminPasswordHash = await bcrypt.hash('Admin@123', 12);
-  const superPasswordHash = await bcrypt.hash('Super@123', 12);
+  // 1. Admin accounts - bootstrapped from environment variables if configured
+  const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD;
+  const superPassword = process.env.INITIAL_SUPER_ADMIN_PASSWORD || process.env.SUPER_ADMIN_PASSWORD;
 
-  await prisma.user.upsert({
-    where:  { email: 'super@gmail.com' },
-    update: { passwordHash: superPasswordHash, role: 'SUPER_ADMIN', staffRole: 'SUPER_ADMIN' },
-    create: {
-      name:          'Platform Super Admin',
-      email:         'super@gmail.com',
-      mobile:        '9876543211',
-      passwordHash:  superPasswordHash,
-      role:          'SUPER_ADMIN',
-      staffRole:     'SUPER_ADMIN',
-      status:        'ACTIVE',
-      isStaffActive: true,
-      permissions:   { all: true },
-    },
-  });
+  if (superPassword) {
+    const superPasswordHash = await bcrypt.hash(superPassword, 12);
+    await prisma.user.upsert({
+      where:  { email: process.env.SUPER_ADMIN_EMAIL || 'super@gmail.com' },
+      update: { passwordHash: superPasswordHash, role: 'SUPER_ADMIN', staffRole: 'SUPER_ADMIN' },
+      create: {
+        name:          'Platform Super Admin',
+        email:         process.env.SUPER_ADMIN_EMAIL || 'super@gmail.com',
+        mobile:        '9876543211',
+        passwordHash:  superPasswordHash,
+        role:          'SUPER_ADMIN',
+        staffRole:     'SUPER_ADMIN',
+        status:        'ACTIVE',
+        isStaffActive: true,
+        permissions:   { all: true },
+      },
+    });
+    console.log('[Bootstrap] Super Admin account ready.');
+  } else {
+    console.warn('[Bootstrap] SUPER_ADMIN_PASSWORD not configured; skipping Super Admin seed.');
+  }
 
-  await prisma.user.upsert({
-    where:  { email: 'admin@gmail.com' },
-    update: { passwordHash: adminPasswordHash, role: 'ADMIN', staffRole: 'ADMIN' },
-    create: {
-      name:          'Store Admin',
-      email:         'admin@gmail.com',
-      mobile:        '9876543210',
-      passwordHash:  adminPasswordHash,
-      role:          'ADMIN',
-      staffRole:     'ADMIN',
-      status:        'ACTIVE',
-      isStaffActive: true,
-      permissions:   { all: true },
-    },
-  });
-
-  console.log('[Bootstrap] Admin accounts ready: super@gmail.com & admin@gmail.com');
+  if (adminPassword) {
+    const adminPasswordHash = await bcrypt.hash(adminPassword, 12);
+    await prisma.user.upsert({
+      where:  { email: process.env.ADMIN_EMAIL || 'admin@gmail.com' },
+      update: { passwordHash: adminPasswordHash, role: 'ADMIN', staffRole: 'ADMIN' },
+      create: {
+        name:          'Store Admin',
+        email:         process.env.ADMIN_EMAIL || 'admin@gmail.com',
+        mobile:        '9876543210',
+        passwordHash:  adminPasswordHash,
+        role:          'ADMIN',
+        staffRole:     'ADMIN',
+        status:        'ACTIVE',
+        isStaffActive: true,
+        permissions:   { all: true },
+      },
+    });
+    console.log('[Bootstrap] Store Admin account ready.');
+  } else {
+    console.warn('[Bootstrap] ADMIN_PASSWORD not configured; skipping Store Admin seed.');
+  }
 
   // 2. Store settings - created once, never overwritten.
   const existingSettings = await prisma.storeSetting.findUnique({ where: { id: 1 } });

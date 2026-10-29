@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import {prisma} from '../config/prisma.js';
 import {env} from '../config/env.js';
@@ -5,6 +6,7 @@ import {AppError,asyncHandler,ok} from '../utils/response.js';
 import {accessToken,hashToken,refreshExpiry,refreshToken,verifyRefresh} from '../utils/tokens.js';
 import {sendOtpEmail} from '../services/mail.service.js';
 import {logAudit} from '../services/audit.service.js';
+import {cache} from '../services/cache.service.js';
 const publicUser=u=>({
   id:u.id,
   name:u.name,
@@ -115,9 +117,149 @@ export const customerLogin=asyncHandler(async(req,res)=>{
 
   ok(res, await issue(res, user), 'Login successful');
 });
-export const requestOtp=asyncHandler(async(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase();const name=String(req.body.name||'').trim();const mobile=String(req.body.mobile||'').trim();const password=req.body.password;const emailUser=await prisma.user.findUnique({where:{email}});if(emailUser?.passwordHash)throw new AppError('An account already exists with this email. Please sign in.',409);const previous=!password?await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'signup',consumedAt:null,expiresAt:{gt:new Date()}},orderBy:{createdAt:'desc'}}):null;if(!password&&!previous)throw new AppError('Signup session expired. Please enter your details again.',400);const mobileUser=password?await prisma.user.findUnique({where:{mobile}}):null;if(mobileUser&&mobileUser.id!==emailUser?.id)throw new AppError('An account already exists with this mobile number.',409);const otp=String(Math.floor(100000+Math.random()*900000));const row=await prisma.otpVerification.create({data:{identifier:email,purpose:'signup',codeHash:await bcrypt.hash(otp,10),pendingName:name||previous.pendingName,pendingMobile:mobile||previous.pendingMobile,pendingPasswordHash:password?await bcrypt.hash(password,12):previous.pendingPasswordHash,expiresAt:new Date(Date.now()+env.otpMinutes*60000)}});try{await sendOtpEmail(email,otp)}catch(error){await prisma.otpVerification.delete({where:{id:row.id}});throw error}ok(res,{expiresInSeconds:env.otpMinutes*60},'OTP sent to your email')});
+
+export const generateSecureOtp = () => crypto.randomInt(100000, 1000000).toString();
+
+const OTP_RESEND_COOLDOWN_SECONDS = env.otpCooldownSeconds || 60;
+
+export async function assertOtpCooldown(email) {
+  if (!email) return;
+  const cacheKey = `otp:cooldown:${email}`;
+  const lastRequestedAt = cache.get(cacheKey);
+  if (lastRequestedAt) {
+    const elapsed = Math.floor((Date.now() - Number(lastRequestedAt)) / 1000);
+    const remaining = Math.max(1, OTP_RESEND_COOLDOWN_SECONDS - elapsed);
+    throw new AppError(`Please wait ${remaining} seconds before requesting another code.`, 429);
+  }
+
+  const cutoff = new Date(Date.now() - OTP_RESEND_COOLDOWN_SECONDS * 1000);
+  const recentDbOtp = await prisma.otpVerification.findFirst({
+    where: {
+      identifier: email,
+      createdAt: { gt: cutoff }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  if (recentDbOtp) {
+    const elapsed = Math.floor((Date.now() - new Date(recentDbOtp.createdAt).getTime()) / 1000);
+    const remaining = Math.max(1, OTP_RESEND_COOLDOWN_SECONDS - elapsed);
+    cache.set(cacheKey, new Date(recentDbOtp.createdAt).getTime(), remaining);
+    throw new AppError(`Please wait ${remaining} seconds before requesting another code.`, 429);
+  }
+}
+
+export function recordOtpSent(email) {
+  if (!email) return;
+  cache.set(`otp:cooldown:${email}`, Date.now(), OTP_RESEND_COOLDOWN_SECONDS);
+}
+
+export const requestOtp = asyncHandler(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const name = String(req.body.name || '').trim();
+  const mobile = String(req.body.mobile || '').trim();
+  const password = req.body.password;
+
+  if (!email) {
+    throw new AppError('Email is required', 400);
+  }
+
+  // BUG-19: Enforce per-email cooldown to prevent email bombing
+  await assertOtpCooldown(email);
+
+  const emailUser = await prisma.user.findUnique({ where: { email } });
+
+  // BUG-18 Fix: Prevent user enumeration on signup OTP request.
+  // If an account already exists with this email, return generic 200 response identical to success.
+  if (emailUser?.passwordHash) {
+    recordOtpSent(email);
+    await bcrypt.hash(email, 10);
+    return ok(res, { expiresInSeconds: env.otpMinutes * 60 }, 'OTP sent to your email');
+  }
+
+  const previous = !password
+    ? await prisma.otpVerification.findFirst({
+        where: { identifier: email, purpose: 'signup', consumedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'desc' }
+      })
+    : null;
+
+  if (!password && !previous) {
+    throw new AppError('Signup session expired. Please enter your details again.', 400);
+  }
+
+  const mobileUser = password ? await prisma.user.findUnique({ where: { mobile } }) : null;
+  if (mobileUser && mobileUser.id !== emailUser?.id) {
+    // Also protect mobile enumeration with generic 200 response
+    recordOtpSent(email);
+    await bcrypt.hash(mobile, 10);
+    return ok(res, { expiresInSeconds: env.otpMinutes * 60 }, 'OTP sent to your email');
+  }
+
+  const otp = generateSecureOtp();
+  const row = await prisma.otpVerification.create({
+    data: {
+      identifier: email,
+      purpose: 'signup',
+      codeHash: await bcrypt.hash(otp, 10),
+      pendingName: name || previous.pendingName,
+      pendingMobile: mobile || previous.pendingMobile,
+      pendingPasswordHash: password ? await bcrypt.hash(password, 12) : previous.pendingPasswordHash,
+      expiresAt: new Date(Date.now() + env.otpMinutes * 60000)
+    }
+  });
+
+  try {
+    await sendOtpEmail(email, otp);
+  } catch (error) {
+    await prisma.otpVerification.delete({ where: { id: row.id } });
+    throw error;
+  }
+
+  recordOtpSent(email);
+  ok(res, { expiresInSeconds: env.otpMinutes * 60 }, 'OTP sent to your email');
+});
 export const verifyOtp=asyncHandler(async(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase();const row=await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'signup',consumedAt:null},orderBy:{createdAt:'desc'}});if(!row||row.expiresAt<new Date()||row.attempts>=5)throw new AppError('Invalid or expired OTP',401);if(!await bcrypt.compare(req.body.otp,row.codeHash)){await prisma.otpVerification.update({where:{id:row.id},data:{attempts:{increment:1}}});throw new AppError('Invalid or expired OTP',401)}const existing=await prisma.user.findUnique({where:{email}});if(existing?.passwordHash)throw new AppError('An account already exists with this email. Please sign in.',409);const user=await prisma.$transaction(async tx=>{await tx.otpVerification.update({where:{id:row.id},data:{consumedAt:new Date()}});return existing?tx.user.update({where:{id:existing.id},data:{name:row.pendingName,mobile:row.pendingMobile,passwordHash:row.pendingPasswordHash}}):tx.user.create({data:{email,name:row.pendingName,mobile:row.pendingMobile,passwordHash:row.pendingPasswordHash}})});ok(res,await issue(res,user),'Account created successfully')});
-export const requestPasswordReset=asyncHandler(async(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase();if(!email){throw new AppError('Email is required',400)}const user=await prisma.user.findUnique({where:{email}});if(!user||!user.passwordHash){throw new AppError('This email is not registered with us / यह ईमेल रजिस्टर्ड नहीं है।',404)}if(user.role!=='CUSTOMER'){throw new AppError('Password reset is only available for customer accounts.',403)}if(user.status!=='ACTIVE'){throw new AppError('Your account is currently inactive. Please contact support.',403)}const otp=String(Math.floor(100000+Math.random()*900000));const row=await prisma.otpVerification.create({data:{identifier:email,purpose:'password_reset',codeHash:await bcrypt.hash(otp,10),expiresAt:new Date(Date.now()+env.otpMinutes*60000)}});try{await sendOtpEmail(email,otp,'password_reset')}catch(error){await prisma.otpVerification.delete({where:{id:row.id}});throw error}ok(res,{expiresInSeconds:env.otpMinutes*60},'A 6-digit reset code has been sent to your email.')});
+export const requestPasswordReset = asyncHandler(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  if (!email) {
+    throw new AppError('Email is required', 400);
+  }
+
+  // BUG-19: Enforce per-email cooldown to prevent email bombing
+  await assertOtpCooldown(email);
+
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  // BUG-18 Fix: Prevent user enumeration on password reset.
+  // If the email is not registered, inactive, or not a customer, return the exact same generic response
+  // as a successful reset request (200 OK with identical payload and message).
+  if (!user || !user.passwordHash || user.role !== 'CUSTOMER' || user.status !== 'ACTIVE') {
+    recordOtpSent(email);
+    await bcrypt.hash(email, 10);
+    return ok(res, { expiresInSeconds: env.otpMinutes * 60 }, 'A 6-digit reset code has been sent to your email.');
+  }
+
+  const otp = generateSecureOtp();
+  const row = await prisma.otpVerification.create({
+    data: {
+      identifier: email,
+      purpose: 'password_reset',
+      codeHash: await bcrypt.hash(otp, 10),
+      expiresAt: new Date(Date.now() + env.otpMinutes * 60000)
+    }
+  });
+
+  try {
+    await sendOtpEmail(email, otp, 'password_reset');
+  } catch (error) {
+    await prisma.otpVerification.delete({ where: { id: row.id } });
+    throw error;
+  }
+
+  recordOtpSent(email);
+  ok(res, { expiresInSeconds: env.otpMinutes * 60 }, 'A 6-digit reset code has been sent to your email.');
+});
 export const resetPassword=asyncHandler(async(req,res)=>{const {email,otp,password}=req.body;const row=await prisma.otpVerification.findFirst({where:{identifier:email,purpose:'password_reset',consumedAt:null},orderBy:{createdAt:'desc'}});const user=await prisma.user.findUnique({where:{email}});if(!row||!user||user.role!=='CUSTOMER'||row.expiresAt<new Date()||row.attempts>=5)throw new AppError('Invalid or expired reset code',401);if(!await bcrypt.compare(otp,row.codeHash)){await prisma.otpVerification.update({where:{id:row.id},data:{attempts:{increment:1}}});throw new AppError('Invalid or expired reset code',401)}const passwordHash=await bcrypt.hash(password,12);await prisma.$transaction(async tx=>{await tx.otpVerification.update({where:{id:row.id},data:{consumedAt:new Date()}});await tx.user.update({where:{id:user.id},data:{passwordHash}});await tx.refreshToken.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:new Date()}})});res.clearCookie('r2cart_refresh',{path:'/api/v1/auth'});ok(res,null,'Password reset successfully')});
 export const adminLogin=asyncHandler(async(req,res)=>{
   const rawIdentifier=String(req.body.identifier||req.body.email||req.body.mobile||req.body.deliveryStaffId||'').trim();

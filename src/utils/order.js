@@ -1,7 +1,8 @@
+import crypto from 'crypto';
 import {ratingSummary} from './variants.js';
 import {optimizeCloudinaryUrl} from '../services/image.service.js';
 
-export const orderNumber=()=>`GR${Date.now().toString().slice(-8)}${Math.floor(Math.random()*90+10)}`;
+export const orderNumber=()=>`GR${Date.now().toString().slice(-8)}${crypto.randomInt(10, 100)}`;
 export const ticketNumber=()=>`TKT${Date.now().toString().slice(-7)}`;
 export const moneyNumber=value=>Number(value||0);
 

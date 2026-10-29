@@ -2,6 +2,7 @@ import { prisma } from '../config/prisma.js';
 import { AppError, asyncHandler, created, ok } from '../utils/response.js';
 import { finalizePurchaseReceipt } from '../services/fifo.service.js';
 import { logAudit } from '../services/audit.service.js';
+import { invalidateAdminDashboard, invalidateProducts } from '../services/cache.service.js';
 
 export const purchases = {
   /**
@@ -202,6 +203,8 @@ export const purchases = {
       }
     });
 
+    invalidateAdminDashboard();
+    invalidateProducts();
     ok(res, finalized, 'Purchase receipt finalized and FIFO batches generated successfully');
   }),
 

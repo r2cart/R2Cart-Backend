@@ -34,7 +34,7 @@ export function sanitizeErrorMessage(error) {
       msg.includes('Record to delete does not exist') ||
       msg.includes('Record to update not found')
     ) {
-      return 'The requested record was not found or has already been removed.';
+      return 'The requested record was not found.';
     }
     if (error.code === 'P2003' || msg.includes('Foreign key constraint')) {
       return 'This item cannot be deleted because it is linked to other active records.';
@@ -68,9 +68,14 @@ export function errorHandler(error, req, res, next) {
   }
 
   const uploadTooLarge = error.code === 'LIMIT_FILE_SIZE';
+  const isPrismaNotFound = error.code === 'P2025' ||
+    String(error.message || '').includes('Record to delete does not exist') ||
+    String(error.message || '').includes('Record to update not found');
+  const isPrismaConflict = error.code === 'P2002' || /Unique constraint/.test(error.message);
+
   const status = uploadTooLarge
     ? 413
-    : error.status || (/Unique constraint/.test(error.message) ? 409 : 500);
+    : error.status || (isPrismaConflict ? 409 : (isPrismaNotFound ? 404 : 500));
 
   const cleanMessage = sanitizeErrorMessage(error);
 

@@ -12,7 +12,179 @@ import {invalidateAdminDashboard, invalidateProducts} from '../services/cache.se
 const profileDto=user=>({id:user.id,name:user.name,email:user.email,mobile:user.mobile,role:user.role,status:user.status});
 export const profile={get:asyncHandler(async(req,res)=>ok(res,profileDto(req.user))),update:asyncHandler(async(req,res)=>{const name=String(req.body.name||'').trim(),mobile=String(req.body.mobile||'').replace(/\D/g,'');if(name.length<2)throw new AppError('Enter a valid full name',422);if(!/^\d{10}$/.test(mobile))throw new AppError('Enter a valid 10-digit mobile number',422);const existing=await prisma.user.findFirst({where:{mobile,id:{not:req.user.id}}});if(existing)throw new AppError('This mobile number is already linked to another account',409);ok(res,profileDto(await prisma.user.update({where:{id:req.user.id},data:{name,mobile}})),'Profile updated')})};
 const verifyDeliveryArea=area=>resolveDeliveryRules(prisma,area);
-export const addresses={list:asyncHandler(async(req,res)=>ok(res,await prisma.address.findMany({where:{userId:req.user.id},orderBy:[{isDefault:'desc'},{createdAt:'desc'}]}))),create:asyncHandler(async(req,res)=>{await verifyDeliveryArea(req.body.area);if(req.body.isDefault)await prisma.address.updateMany({where:{userId:req.user.id},data:{isDefault:false}});created(res,await prisma.address.create({data:{...req.body,userId:req.user.id}}),'Address saved')}),update:asyncHandler(async(req,res)=>{await verifyDeliveryArea(req.body.area);if(req.body.isDefault)await prisma.address.updateMany({where:{userId:req.user.id},data:{isDefault:false}});ok(res,await prisma.address.update({where:{id:req.params.id,userId:req.user.id},data:req.body}),'Address updated')}),remove:asyncHandler(async(req,res)=>{await prisma.address.delete({where:{id:req.params.id,userId:req.user.id}});ok(res,null,'Address deleted')}),makeDefault:asyncHandler(async(req,res)=>{await prisma.$transaction([prisma.address.updateMany({where:{userId:req.user.id},data:{isDefault:false}}),prisma.address.update({where:{id:req.params.id,userId:req.user.id},data:{isDefault:true}})]);ok(res,null,'Default address updated')})};
+const ALLOWED_ADDRESS_FIELDS = [
+  'name',
+  'mobile',
+  'house',
+  'street',
+  'landmark',
+  'area',
+  'city',
+  'district',
+  'state',
+  'pin',
+  'type',
+  'isDefault'
+];
+
+function pickAddressFields(source = {}, isUpdate = false) {
+  const result = {};
+  for (const field of ALLOWED_ADDRESS_FIELDS) {
+    if (source[field] !== undefined) {
+      if (typeof source[field] === 'string') {
+        result[field] = source[field].trim();
+      } else {
+        result[field] = source[field];
+      }
+    }
+  }
+
+  if (result.mobile !== undefined) {
+    result.mobile = String(result.mobile).replace(/\D/g, '');
+  }
+  if (result.isDefault !== undefined) {
+    result.isDefault = Boolean(result.isDefault);
+  }
+  if (!isUpdate) {
+    result.city = result.city || 'Hathua';
+    result.state = result.state || 'Bihar';
+    result.type = result.type || 'Home';
+    result.house = result.house || '';
+    result.street = result.street || '';
+    result.landmark = result.landmark || '';
+    result.district = result.district || '';
+    result.pin = result.pin || '';
+  }
+  return result;
+}
+
+export const addresses = {
+  list: asyncHandler(async (req, res) => {
+    const rows = await prisma.address.findMany({
+      where: { userId: req.user.id },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }]
+    });
+    ok(res, rows);
+  }),
+
+  create: asyncHandler(async (req, res) => {
+    const data = pickAddressFields(req.body, false);
+    if (!data.name || data.name.length < 2) {
+      throw new AppError('Enter a valid full name (at least 2 characters)', 422);
+    }
+    if (!data.mobile || data.mobile.length < 10) {
+      throw new AppError('Enter a valid 10-digit mobile number', 422);
+    }
+    if (!data.area) {
+      throw new AppError('Area / village is required', 422);
+    }
+
+    await verifyDeliveryArea(data.area);
+
+    if (data.isDefault) {
+      await prisma.address.updateMany({
+        where: { userId: req.user.id },
+        data: { isDefault: false }
+      });
+    }
+
+    const createdAddress = await prisma.address.create({
+      data: {
+        ...data,
+        userId: req.user.id
+      }
+    });
+
+    created(res, createdAddress, 'Address saved');
+  }),
+
+  update: asyncHandler(async (req, res) => {
+    const existing = await prisma.address.findFirst({
+      where: { id: req.params.id, userId: req.user.id }
+    });
+    if (!existing) {
+      throw new AppError('Address not found', 404);
+    }
+
+    const data = pickAddressFields(req.body, true);
+    if (Object.keys(data).length === 0) {
+      throw new AppError('No valid address fields to update', 400);
+    }
+
+    if (data.name !== undefined && data.name.length < 2) {
+      throw new AppError('Enter a valid full name (at least 2 characters)', 422);
+    }
+    if (data.mobile !== undefined && data.mobile.length < 10) {
+      throw new AppError('Enter a valid 10-digit mobile number', 422);
+    }
+    if (data.area !== undefined) {
+      await verifyDeliveryArea(data.area);
+    }
+
+    if (data.isDefault) {
+      await prisma.address.updateMany({
+        where: { userId: req.user.id },
+        data: { isDefault: false }
+      });
+    }
+
+    try {
+      const updatedAddress = await prisma.address.update({
+        where: { id: existing.id },
+        data
+      });
+      ok(res, updatedAddress, 'Address updated');
+    } catch (err) {
+      if (err.code === 'P2025') {
+        throw new AppError('Address not found', 404);
+      }
+      throw err;
+    }
+  }),
+
+  remove: asyncHandler(async (req, res) => {
+    const existing = await prisma.address.findFirst({
+      where: { id: req.params.id, userId: req.user.id }
+    });
+    if (!existing) {
+      throw new AppError('Address not found', 404);
+    }
+
+    try {
+      await prisma.address.delete({
+        where: { id: existing.id }
+      });
+      ok(res, null, 'Address deleted');
+    } catch (err) {
+      if (err.code === 'P2025') {
+        throw new AppError('Address not found', 404);
+      }
+      throw err;
+    }
+  }),
+
+  makeDefault: asyncHandler(async (req, res) => {
+    const existing = await prisma.address.findFirst({
+      where: { id: req.params.id, userId: req.user.id }
+    });
+    if (!existing) {
+      throw new AppError('Address not found', 404);
+    }
+
+    try {
+      await prisma.$transaction([
+        prisma.address.updateMany({ where: { userId: req.user.id }, data: { isDefault: false } }),
+        prisma.address.update({ where: { id: existing.id }, data: { isDefault: true } })
+      ]);
+      ok(res, null, 'Default address updated');
+    } catch (err) {
+      if (err.code === 'P2025') {
+        throw new AppError('Address not found', 404);
+      }
+      throw err;
+    }
+  })
+};
 export const favorites={list:asyncHandler(async(req,res)=>{const rows=await prisma.favorite.findMany({where:{userId:req.user.id},include:{product:{include:{category:true,images:true}}}});ok(res,rows.map(x=>productDto(x.product)))}),add:asyncHandler(async(req,res)=>{await prisma.favorite.upsert({where:{userId_productId:{userId:req.user.id,productId:req.params.productId}},update:{},create:{userId:req.user.id,productId:req.params.productId}});ok(res,null,'Added to favourites')}),remove:asyncHandler(async(req,res)=>{await prisma.favorite.deleteMany({where:{userId:req.user.id,productId:req.params.productId}});ok(res,null,'Removed from favourites')})};
 async function cartData(userId){const cart=await prisma.cart.findUnique({where:{userId},include:{items:{include:{product:{include:{category:true,images:true}}}}}});const items=(cart?.items||[]).map(i=>({...productDto(i.product),qty:i.quantity}));return{items,cart:Object.fromEntries(items.map(i=>[i.id,i.qty])),subtotal:items.reduce((s,p)=>s+p.price*p.qty,0),mrpTotal:items.reduce((s,p)=>s+p.mrp*p.qty,0)}}
 export const cart={get:asyncHandler(async(req,res)=>ok(res,await cartData(req.user.id))),set:asyncHandler(async(req,res)=>{if(req.body.quantity>0){const [product,setting]=await Promise.all([prisma.product.findUnique({where:{id:req.body.productId},include:{category:true}}),prisma.storeSetting.findUnique({where:{id:1},select:{policies:true}})]);if(!product||product.deletedAt||product.status!=='ACTIVE')throw new AppError('This pack is unavailable',409);const comingSoon=setting?.policies?.homeLayout?.comingSoonCategories||[];if(product.category?.slug&&comingSoon.includes(product.category.slug)){throw new AppError(`"${product.name}" belongs to "${product.category.name}" which is coming soon and cannot be ordered yet.`,400);}if(product.stock<=0)throw new AppError(`${product.name} is currently out of stock`,409);if(product.stock<req.body.quantity)throw new AppError(`Only ${product.stock} remaining in stock`,409)}const c=await prisma.cart.upsert({where:{userId:req.user.id},update:{},create:{userId:req.user.id}});if(req.body.quantity===0)await prisma.cartItem.deleteMany({where:{cartId:c.id,productId:req.body.productId}});else await prisma.cartItem.upsert({where:{cartId_productId:{cartId:c.id,productId:req.body.productId}},update:{quantity:req.body.quantity},create:{cartId:c.id,productId:req.body.productId,quantity:req.body.quantity}});ok(res,await cartData(req.user.id),'Cart updated')}),clear:asyncHandler(async(req,res)=>{const c=await prisma.cart.findUnique({where:{userId:req.user.id}});if(c)await prisma.cartItem.deleteMany({where:{cartId:c.id}});ok(res,null,'Cart cleared')})};
@@ -126,7 +298,129 @@ export const checkout=asyncHandler(async(req,res)=>{
   }
 
   const addressSnapshot={id:address.id,name:address.name,fullName:address.name,mobile:address.mobile,house:address.house,street:address.street||'',landmark:address.landmark||'',area:address.area,villageName:rules.villageName||address.area,villageId:rules.villageId||rules.zoneId||null,city:address.city,district:address.district||'',state:address.state||'',pin:address.pin||'',pincode:address.pin||'',type:address.type||'Home',deliveryZone:{id:rules.villageId||rules.zoneId,name:rules.villageName||rules.zoneName,estimatedDelivery:rules.estimatedDelivery}};
-  const result=await prisma.$transaction(async tx=>{const t=await calculateCart(tx,req.user.id,req.body.couponCode,rules);const order=await tx.order.create({data:{orderNumber:orderNumber(),userId:req.user.id,couponId:t.coupon?.id||null,status:'NEW',paymentMethod:'COD',paymentStatus:'PENDING',itemTotal:t.itemTotal,productDiscount:t.productDiscount,couponDiscount:t.couponDiscount,deliveryFee:t.deliveryFee,handlingFee:t.handlingFee,grandTotal:t.grandTotal,addressSnapshot,deliveryInstruction:req.body.deliveryInstruction||null,deliveryType,deliveryDate,deliverySlot,items:{create:t.cart.items.map(i=>({productId:i.productId,name:i.product.name,sku:i.product.sku,unit:i.product.unit,image:i.product.images[0]?.url||null,mrp:i.product.mrp,price:i.product.price,costPrice:i.product.costPrice||0,quantity:i.quantity}))},history:{create:{status:'NEW',note:deliveryType==='SCHEDULED'?`Order placed (Scheduled for ${deliveryDate}, ${deliverySlot})`:'Order placed'}},payment:{create:{method:'COD',status:'PENDING',amount:t.grandTotal}}},include:{items:true,history:true}});for(const item of t.cart.items){const current=await tx.product.findUnique({where:{id:item.productId},select:{id:true,name:true,stock:true}});if(!current||current.stock<item.quantity)throw new AppError(`Insufficient stock for ${current?.name||item.product?.name||'item'}. Only ${current?.stock||0} remaining.`,409);await tx.product.update({where:{id:item.productId},data:{stock:Math.max(0,current.stock-item.quantity)}});if(tx.inventoryLog?.create)await tx.inventoryLog.create({data:{productId:item.productId,type:'ORDER_DEDUCT',previousStock:current.stock,newStock:Math.max(0,current.stock-item.quantity),quantityDiff:-item.quantity,reason:`Order placed #${order.orderNumber}`,orderId:order.id}})}try { await consumeFifoBatches(tx, { orderId: order.id, orderNumber: order.orderNumber, items: t.cart.items }); } catch(fifoErr) { console.error('[FIFO] Non-fatal FIFO allocation error on order', order.orderNumber, ':', fifoErr?.message); }if(t.coupon){const willExhaust=t.coupon.usageLimit!==null&&(t.coupon.usageCount+1)>=t.coupon.usageLimit;await tx.coupon.update({where:{id:t.coupon.id},data:{usageCount:{increment:1},...(willExhaust?{status:'INACTIVE'}:{})}});await tx.couponUsage.create({data:{couponId:t.coupon.id,userId:req.user.id,orderId:order.id}})}await tx.cartItem.deleteMany({where:{cartId:t.cart.id}});return order},{maxWait:15000,timeout:30000});created(res,orderDto(result),'Order placed successfully');invalidateAdminDashboard();invalidateProducts();notifyAdminsNewOrder(result).catch(e=>console.error('Admin order push error:',e.message));notifyCustomerOrderPlaced(result).catch(e=>console.error('Customer order push error:',e.message));sendFcmToAdminsNewOrder(result).catch(e=>console.error('Admin FCM order push error:',e.message));sendFcmToCustomerOrderPlaced(result).catch(e=>console.error('Customer FCM order push error:',e.message))});
+  const result = await prisma.$transaction(async tx => {
+    const t = await calculateCart(tx, req.user.id, req.body.couponCode, rules);
+    const order = await tx.order.create({
+      data: {
+        orderNumber: orderNumber(),
+        userId: req.user.id,
+        couponId: t.coupon?.id || null,
+        status: 'NEW',
+        paymentMethod: 'COD',
+        paymentStatus: 'PENDING',
+        itemTotal: t.itemTotal,
+        productDiscount: t.productDiscount,
+        couponDiscount: t.couponDiscount,
+        deliveryFee: t.deliveryFee,
+        handlingFee: t.handlingFee,
+        grandTotal: t.grandTotal,
+        addressSnapshot,
+        deliveryInstruction: req.body.deliveryInstruction || null,
+        deliveryType,
+        deliveryDate,
+        deliverySlot,
+        items: {
+          create: t.cart.items.map(i => ({
+            productId: i.productId,
+            name: i.product.name,
+            sku: i.product.sku,
+            unit: i.product.unit,
+            image: i.product.images[0]?.url || null,
+            mrp: i.product.mrp,
+            price: i.product.price,
+            costPrice: i.product.costPrice || 0,
+            quantity: i.quantity
+          }))
+        },
+        history: {
+          create: {
+            status: 'NEW',
+            note: deliveryType === 'SCHEDULED' ? `Order placed (Scheduled for ${deliveryDate}, ${deliverySlot})` : 'Order placed'
+          }
+        },
+        payment: {
+          create: {
+            method: 'COD',
+            status: 'PENDING',
+            amount: t.grandTotal
+          }
+        }
+      },
+      include: { items: true, history: true }
+    });
+
+    // Deterministic item order by productId to prevent deadlocks across concurrent checkouts
+    const sortedItems = [...t.cart.items].sort((a, b) => String(a.productId).localeCompare(String(b.productId)));
+
+    for (const item of sortedItems) {
+      const qty = Number(item.quantity);
+      if (qty <= 0) continue;
+
+      // Atomic conditional decrement — locks row and fails immediately if stock < qty (prevents oversell race condition)
+      const updateResult = await tx.product.updateMany({
+        where: {
+          id: item.productId,
+          stock: { gte: qty },
+          deletedAt: null
+        },
+        data: {
+          stock: { decrement: qty }
+        }
+      });
+
+      if (updateResult.count === 0) {
+        const current = await tx.product.findUnique({
+          where: { id: item.productId },
+          select: { id: true, name: true, stock: true }
+        });
+        throw new AppError(
+          `Insufficient stock for ${current?.name || item.product?.name || 'item'}. Only ${current?.stock || 0} remaining.`,
+          409
+        );
+      }
+
+      const updatedProduct = await tx.product.findUnique({
+        where: { id: item.productId },
+        select: { stock: true }
+      });
+      const newStock = updatedProduct?.stock ?? 0;
+      const previousStock = newStock + qty;
+
+      if (tx.inventoryLog?.create) {
+        await tx.inventoryLog.create({
+          data: {
+            productId: item.productId,
+            type: 'ORDER_DEDUCT',
+            previousStock,
+            newStock,
+            quantityDiff: -qty,
+            reason: `Order placed #${order.orderNumber}`,
+            orderId: order.id
+          }
+        });
+      }
+    }
+
+    try {
+      await consumeFifoBatches(tx, { orderId: order.id, orderNumber: order.orderNumber, items: t.cart.items });
+    } catch (fifoErr) {
+      console.error('[FIFO] Non-fatal FIFO allocation error on order', order.orderNumber, ':', fifoErr?.message);
+    }
+
+    if (t.coupon) {
+      const willExhaust = t.coupon.usageLimit !== null && (t.coupon.usageCount + 1) >= t.coupon.usageLimit;
+      await tx.coupon.update({
+        where: { id: t.coupon.id },
+        data: { usageCount: { increment: 1 }, ...(willExhaust ? { status: 'INACTIVE' } : {}) }
+      });
+      await tx.couponUsage.create({
+        data: { couponId: t.coupon.id, userId: req.user.id, orderId: order.id }
+      });
+    }
+
+    await tx.cartItem.deleteMany({ where: { cartId: t.cart.id } });
+    return order;
+  }, { maxWait: 15000, timeout: 30000 });created(res,orderDto(result),'Order placed successfully');invalidateAdminDashboard();invalidateProducts();notifyAdminsNewOrder(result).catch(e=>console.error('Admin order push error:',e.message));notifyCustomerOrderPlaced(result).catch(e=>console.error('Customer order push error:',e.message));sendFcmToAdminsNewOrder(result).catch(e=>console.error('Admin FCM order push error:',e.message));sendFcmToCustomerOrderPlaced(result).catch(e=>console.error('Customer FCM order push error:',e.message))});
 export const orders={
   list:asyncHandler(async(req,res)=>{
     const rows=await prisma.order.findMany({
@@ -223,6 +517,8 @@ export const orders={
       });
     });
     ok(res,orderDto(row),'Order cancelled successfully');
+    invalidateAdminDashboard();
+    invalidateProducts();
     logAudit(req,{
       module:'ORDERS',
       action:'ORDER_CANCELLED_BY_CUSTOMER',
@@ -293,7 +589,7 @@ export const orders={
       } catch {}
 
       const newSnapshot = {
-        ...snap,
+        id: snap.id || null,
         name: trimmedName,
         fullName: trimmedName,
         mobile: cleanMobile,
@@ -306,6 +602,9 @@ export const orders={
         city: trimmedCity,
         pin: String(pin || '').trim(),
         pincode: String(pin || '').trim(),
+        district: String(snap.district || '').trim(),
+        state: String(snap.state || 'Bihar').trim(),
+        type: snap.type || 'Home',
         deliveryZone: rules ? {
           id: rules.villageId || rules.zoneId,
           name: rules.villageName || rules.zoneName,

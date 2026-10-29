@@ -1,5 +1,31 @@
 import { env } from '../config/env.js';
 import { ok, created, AppError, asyncHandler } from '../utils/response.js';
+
+// SSRF allowlist — only known push service hosts are permitted (BUG-04)
+const ALLOWED_PUSH_HOSTS = [
+  'fcm.googleapis.com',          // Google FCM
+  'updates.push.services.mozilla.com', // Firefox
+  'updates-autopush.stage.mozaws.net', // Firefox staging
+  'web.push.apple.com',          // Safari / Apple
+  'edge.microsoft.com',          // Edge
+  'wns2.notify.windows.com',     // Windows Push Notification Service
+  'notify.windows.com',
+];
+
+function assertSafePushEndpoint(endpoint) {
+  let parsed;
+  try { parsed = new URL(endpoint); } catch {
+    throw new AppError('Invalid subscription endpoint URL', 400);
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new AppError('Push endpoint must use HTTPS', 400);
+  }
+  const host = parsed.hostname.toLowerCase();
+  const allowed = ALLOWED_PUSH_HOSTS.some(h => host === h || host.endsWith('.' + h));
+  if (!allowed) {
+    throw new AppError('Push endpoint host is not a recognised push service', 400);
+  }
+}
 import {
   savePushSubscription,
   removePushSubscription,
@@ -26,6 +52,9 @@ export const subscribe = asyncHandler(async (req, res) => {
   const assignedRole = (req.user?.role === 'ADMIN' || role === 'ADMIN') ? 'ADMIN' : 'CUSTOMER';
   const userId = (assignedRole === 'ADMIN' && req.user?.role !== 'ADMIN') ? null : (req.user?.id || null);
   const userAgent = req.headers['user-agent'] || null;
+
+  // SSRF guard — validate endpoint before persisting (BUG-04)
+  assertSafePushEndpoint(subscription.endpoint);
 
   const saved = await savePushSubscription({
     userId,
@@ -54,6 +83,9 @@ export const sendTestPush = asyncHandler(async (req, res) => {
   if (!sub || !sub.endpoint) {
     throw new AppError('Subscription is required for test notification', 400);
   }
+
+  // SSRF guard — reject arbitrary/internal URLs (BUG-04)
+  assertSafePushEndpoint(sub.endpoint);
 
   const result = await sendNotificationToSubscription(
     {

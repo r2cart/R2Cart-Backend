@@ -5,7 +5,7 @@ import {notifyCustomerOrderStatusUpdate} from '../services/notification.service.
 import {sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
 import {logAudit} from '../services/audit.service.js';
 import {reverseFifoAllocations} from '../services/fifo.service.js';
-import {invalidateAdminDashboard} from '../services/cache.service.js';
+import {invalidateAdminDashboard, invalidateProducts} from '../services/cache.service.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
@@ -106,6 +106,9 @@ export const orders={
   });
   ok(res,orderDto(row),'Order status updated');
   invalidateAdminDashboard();
+  if(status==='CANCELLED'){
+    invalidateProducts();
+  }
   logAudit(req, {
     module: 'ORDERS',
     action: status === 'CANCELLED' ? 'ORDER_CANCELLED' : 'ORDER_STATUS_UPDATE',
@@ -208,6 +211,10 @@ export const orders={
   });
 
   ok(res,orderDto(row),'Order item updated');
+  invalidateAdminDashboard();
+  if(row.status==='CANCELLED'){
+    invalidateProducts();
+  }
   notifyCustomerOrderStatusUpdate(row,row.status,`Item update: ${req.body.reason||'Order total adjusted'}`).catch(()=>{});
   sendFcmToCustomerStatusUpdate(row,row.status,`Order updated: Revised total is ₹${row.grandTotal}`).catch(()=>{});
  })
