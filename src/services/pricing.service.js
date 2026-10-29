@@ -71,15 +71,25 @@ export async function calculateCart(tx, userId, couponCode, rules) {
 
   const comingSoonCats = storeSetting?.policies?.homeLayout?.comingSoonCategories || [];
   const comingSoonProducts = storeSetting?.policies?.homeLayout?.comingSoonProducts || [];
+  const comingSoonExemptions = storeSetting?.policies?.homeLayout?.comingSoonExemptions || [];
 
   // Auto-prune any inactive, deleted, or removed products from user cart, or products in Coming Soon categories/products
   const invalidCartItemIds = [];
   const comingSoonItemNames = [];
   const validItems = [];
   for (const item of cart.items) {
-    const isCatSoon = item.product?.category?.slug && comingSoonCats.includes(item.product.category.slug);
-    const isProdSoon = item.product?.id && comingSoonProducts.includes(item.product.id);
-    const isItemSoon = isCatSoon || isProdSoon || Boolean(item.product?.isSoon);
+    const catSlug = item.product?.category?.slug;
+    const prodId = item.product?.id;
+    let isItemSoon = false;
+    if (prodId && comingSoonProducts.includes(prodId)) {
+      isItemSoon = true;
+    } else if (prodId && comingSoonExemptions.includes(prodId)) {
+      isItemSoon = false;
+    } else if (catSlug && comingSoonCats.includes(catSlug)) {
+      isItemSoon = true;
+    } else {
+      isItemSoon = Boolean(item.product?.isSoon);
+    }
 
     if (!item.product || item.product.deletedAt || item.product.status !== 'ACTIVE') {
       invalidCartItemIds.push(item.id);

@@ -288,28 +288,72 @@ export const products={
  }),
  comingSoon:asyncHandler(async(req,res)=>{
   const productId=req.params.id;
-  const currentProduct=await prisma.product.findUnique({where:{id:productId}});
+  const currentProduct=await prisma.product.findUnique({
+    where:{id:productId},
+    include:{category:true}
+  });
   if(!currentProduct||currentProduct.deletedAt)throw new AppError('Product not found',404);
 
   const setting=await prisma.storeSetting.findUnique({where:{id:1}});
   const policies=setting?.policies||{};
   const homeLayout=policies.homeLayout||{};
+  const comingSoonCats=Array.isArray(homeLayout.comingSoonCategories)?homeLayout.comingSoonCategories:[];
   const comingSoonProducts=new Set(homeLayout.comingSoonProducts||[]);
+  const comingSoonExemptions=new Set(homeLayout.comingSoonExemptions||[]);
 
-  let isSoon=req.body.isSoon!==undefined?Boolean(req.body.isSoon):!comingSoonProducts.has(productId);
+  // Include all variant packs of this product so variants stay in sync
+  const allRelatedProducts=await prisma.product.findMany({
+    where:{
+      deletedAt:null,
+      OR:[
+        {id:productId},
+        ...(currentProduct.variantGroupId?[{variantGroupId:currentProduct.variantGroupId}]:[{variantGroupId:productId}])
+      ]
+    },
+    select:{id:true}
+  });
+  const allIds=Array.from(new Set([productId,...allRelatedProducts.map(p=>p.id)]));
 
-  if(isSoon){
-    comingSoonProducts.add(productId);
+  // Calculate current effective coming soon status
+  const catSlug=currentProduct.category?.slug;
+  const isCatSoon=Boolean(catSlug&&comingSoonCats.includes(catSlug));
+  let currentEffectiveSoon=false;
+  if(comingSoonProducts.has(productId)){
+    currentEffectiveSoon=true;
+  }else if(comingSoonExemptions.has(productId)){
+    currentEffectiveSoon=false;
+  }else if(isCatSoon){
+    currentEffectiveSoon=true;
   }else{
-    comingSoonProducts.delete(productId);
+    currentEffectiveSoon=Boolean(currentProduct.isSoon);
+  }
+
+  const targetSoon=req.body.isSoon!==undefined?Boolean(req.body.isSoon):!currentEffectiveSoon;
+
+  if(targetSoon){
+    allIds.forEach(id=>{
+      comingSoonProducts.add(id);
+      comingSoonExemptions.delete(id);
+    });
+  }else{
+    allIds.forEach(id=>{
+      comingSoonProducts.delete(id);
+      if(isCatSoon){
+        comingSoonExemptions.add(id);
+      }else{
+        comingSoonExemptions.delete(id);
+      }
+    });
   }
 
   const updatedList=Array.from(comingSoonProducts);
+  const updatedExemptions=Array.from(comingSoonExemptions);
   const updatedPolicies={
     ...policies,
     homeLayout:{
       ...homeLayout,
-      comingSoonProducts:updatedList
+      comingSoonProducts:updatedList,
+      comingSoonExemptions:updatedExemptions
     }
   };
 
@@ -341,10 +385,16 @@ export const products={
     action:'PRODUCT_COMING_SOON_TOGGLE',
     resourceId:productId,
     resourceName:currentProduct.name,
-    details:{productId,isSoon,name:currentProduct.name}
+    details:{productId,isSoon:targetSoon,name:currentProduct.name}
   });
 
-  ok(res,{id:productId,isSoon,comingSoonProducts:updatedList},isSoon?`"${currentProduct.name}" marked as Coming Soon`:`"${currentProduct.name}" marked as Available`);
+  ok(res,{
+    id:productId,
+    isSoon:targetSoon,
+    comingSoonProducts:updatedList,
+    comingSoonExemptions:updatedExemptions,
+    policies:updatedPolicies
+  },targetSoon?`"${currentProduct.name}" marked as Coming Soon`:`"${currentProduct.name}" marked as Available`);
  })
 };
 const categoryData=body=>{

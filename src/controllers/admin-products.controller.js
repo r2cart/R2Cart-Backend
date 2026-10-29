@@ -17,10 +17,24 @@ const include={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
 export const list=asyncHandler(async(req,res)=>{
  const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||20));
  const where=productFilters(req.query,prisma.product.fields.lowStockThreshold);
- const [allRows,rawTotalPacks]=await Promise.all([
+ const [allRows,rawTotalPacks,storeSetting]=await Promise.all([
    prisma.product.findMany({where,include,orderBy:[{createdAt:'desc'},{id:'asc'}]}),
-   prisma.product.count({where:{deletedAt:null}})
+   prisma.product.count({where:{deletedAt:null}}),
+   prisma.storeSetting.findUnique({where:{id:1},select:{policies:true}}).catch(()=>null)
  ]);
+
+ const comingSoonCats=storeSetting?.policies?.homeLayout?.comingSoonCategories||[];
+ const comingSoonProducts=storeSetting?.policies?.homeLayout?.comingSoonProducts||[];
+ const comingSoonExemptions=storeSetting?.policies?.homeLayout?.comingSoonExemptions||[];
+
+ const calcIsSoon=(prod)=>{
+   if(!prod)return false;
+   if(comingSoonProducts.includes(prod.id))return true;
+   if(comingSoonExemptions.includes(prod.id))return false;
+   const catSlug=prod.category?.slug;
+   if(catSlug&&comingSoonCats.includes(catSlug))return true;
+   return Boolean(prod.isSoon);
+ };
 
  const groupMap=new Map();
  for(const row of allRows){
@@ -40,8 +54,10 @@ export const list=asyncHandler(async(req,res)=>{
      return Number(a.price)-Number(b.price);
    });
    const primary=variants[0];
+   const isSoon=calcIsSoon(primary);
    uniqueList.push({
      ...productDto(primary),
+     isSoon,
      packCount:variants.length,
      packs:variants.map(v=>({
        id:v.id,
@@ -49,7 +65,8 @@ export const list=asyncHandler(async(req,res)=>{
        price:Number(v.price),
        mrp:Number(v.mrp),
        stock:v.stock,
-       status:v.status
+       status:v.status,
+       isSoon:calcIsSoon(v)
      }))
    });
  }
@@ -58,6 +75,8 @@ export const list=asyncHandler(async(req,res)=>{
  const pagedProducts=uniqueList.slice((page-1)*limit,page*limit);
  ok(res,{
    products:pagedProducts,
+   comingSoonProducts,
+   comingSoonExemptions,
    pagination:{page,limit,total,pages:Math.max(1,Math.ceil(total/limit))},
    totalProducts:rawTotalPacks,
    totalUniqueProducts:total
@@ -65,8 +84,24 @@ export const list=asyncHandler(async(req,res)=>{
 });
 
 export const get=asyncHandler(async(req,res)=>{
- const row=await prisma.product.findFirst({where:{id:req.params.id,deletedAt:null},include});
+ const [row,storeSetting]=await Promise.all([
+   prisma.product.findFirst({where:{id:req.params.id,deletedAt:null},include}),
+   prisma.storeSetting.findUnique({where:{id:1},select:{policies:true}}).catch(()=>null)
+ ]);
  if(!row)throw new AppError('Product not found',404);
+ const comingSoonCats=storeSetting?.policies?.homeLayout?.comingSoonCategories||[];
+ const comingSoonProducts=storeSetting?.policies?.homeLayout?.comingSoonProducts||[];
+ const comingSoonExemptions=storeSetting?.policies?.homeLayout?.comingSoonExemptions||[];
+
+ const calcIsSoon=(prod)=>{
+   if(!prod)return false;
+   if(comingSoonProducts.includes(prod.id))return true;
+   if(comingSoonExemptions.includes(prod.id))return false;
+   const catSlug=prod.category?.slug;
+   if(catSlug&&comingSoonCats.includes(catSlug))return true;
+   return Boolean(prod.isSoon);
+ };
+
  const groupKey=row.variantGroupId||row.id;
  const variants=await prisma.product.findMany({
    where:{deletedAt:null,OR:[{id:row.id},{variantGroupId:groupKey}]},
@@ -75,7 +110,8 @@ export const get=asyncHandler(async(req,res)=>{
  });
  ok(res,{
    ...productDto(row),
+   isSoon:calcIsSoon(row),
    packCount:variants.length,
-   packs:variants.map(productDto)
+   packs:variants.map(v=>({...productDto(v),isSoon:calcIsSoon(v)}))
  },'Admin product fetched');
 });
