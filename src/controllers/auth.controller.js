@@ -28,9 +28,10 @@ async function issue(res,user,{cookieName,cookiePath='/'}={}){
  const access=accessToken(user),refresh=refreshToken(user);
  await prisma.refreshToken.create({data:{userId:user.id,tokenHash:hashToken(refresh),expiresAt:refreshExpiry()}});
  const isProd=env.nodeEnv==='production';
+ const isDelivery = user.role === 'DELIVERY_PERSON' || user.staffRole === 'DELIVERY_PERSON';
  const targetCookie = cookieName || (
+   isDelivery ? 'r2cart_delivery_refresh' :
    user.role === 'CUSTOMER' ? 'r2cart_refresh' :
-   user.role === 'DELIVERY_PERSON' ? 'r2cart_delivery_refresh' :
    'r2cart_admin_refresh'
  );
  res.cookie(targetCookie,refresh,{
@@ -76,19 +77,43 @@ export const customerLogin=asyncHandler(async(req,res)=>{
     throw new AppError('Invalid email, mobile or password', 401);
   }
 
-  // Unified login support: Customers, Delivery Partners, and Store Admins can all sign in
-  if (user.role === 'DELIVERY_PERSON') {
+  // Portal access control: /login is strictly for Customers and Delivery Partners.
+  // Super Admin and Store Admin/Manager must use their respective administrative paths.
+  const isSuper = user.role === 'SUPER_ADMIN' || user.staffRole === 'SUPER_ADMIN';
+  if (isSuper) {
+    logAudit(req, {
+      module: 'AUTH',
+      action: 'LOGIN_FAILED',
+      resourceName: rawIdentifier,
+      details: { attemptedEmail: rawIdentifier, reason: 'Super Admin attempted login on standard customer portal' }
+    });
+    throw new AppError('Super Admin accounts must sign in via their dedicated Super Admin portal.', 403);
+  }
+
+  const isAdmin = ['ADMIN', 'MANAGER'].includes(user.role) || ['ADMIN', 'MANAGER'].includes(user.staffRole);
+  if (isAdmin) {
+    logAudit(req, {
+      module: 'AUTH',
+      action: 'LOGIN_FAILED',
+      resourceName: rawIdentifier,
+      details: { attemptedEmail: rawIdentifier, reason: 'Store Admin/Manager attempted login on standard customer portal' }
+    });
+    throw new AppError('Administrative accounts must sign in via their dedicated Administrator portal.', 403);
+  }
+
+  // Delivery Partner validation
+  const isDelivery = user.role === 'DELIVERY_PERSON' || user.staffRole === 'DELIVERY_PERSON';
+  if (isDelivery) {
     if (user.isStaffActive === false || user.status !== 'ACTIVE') {
       throw new AppError('Your delivery account is currently deactivated. Please contact administrator.', 403);
     }
-  } else if (['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.role)) {
-    if (user.isStaffActive === false || user.status !== 'ACTIVE') {
-      throw new AppError('Your staff account is currently deactivated. Please contact administrator.', 403);
-    }
-  } else {
+  } else if (user.role === 'CUSTOMER') {
+    // Customer validation
     if (user.status !== 'ACTIVE') {
       throw new AppError('Your account is currently unavailable', 403);
     }
+  } else {
+    throw new AppError('This login portal is strictly for customers and delivery partners.', 403);
   }
 
   const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -108,7 +133,9 @@ export const customerLogin=asyncHandler(async(req,res)=>{
     details: { identifier: rawIdentifier, role: user.staffRole || user.role }
   });
 
-  ok(res, await issue(res, user), 'Login successful');
+  ok(res, await issue(res, user, {
+    cookieName: isDelivery ? 'r2cart_delivery_refresh' : 'r2cart_refresh'
+  }), 'Login successful');
 });
 
 export const generateSecureOtp = () => crypto.randomInt(100000, 1000000).toString();
@@ -486,11 +513,11 @@ export const refresh = asyncHandler(async (req, res) => {
   let raw = req.body?.refreshToken || req.headers['x-refresh-token'];
   if (!raw) {
     if (role === 'ADMIN') {
-      raw = req.cookies?.r2cart_admin_refresh || req.cookies?.r2cart_refresh;
+      raw = req.cookies?.r2cart_admin_refresh;
     } else if (role === 'DELIVERY') {
-      raw = req.cookies?.r2cart_delivery_refresh || req.cookies?.r2cart_refresh;
+      raw = req.cookies?.r2cart_delivery_refresh;
     } else {
-      raw = req.cookies?.r2cart_refresh || req.cookies?.r2cart_admin_refresh || req.cookies?.r2cart_delivery_refresh;
+      raw = req.cookies?.r2cart_refresh;
     }
   }
   if (!raw) throw new AppError('Refresh token required', 401);
@@ -518,6 +545,20 @@ export const refresh = asyncHandler(async (req, res) => {
     !['CUSTOMER', 'ADMIN', 'MANAGER', 'SUPER_ADMIN', 'DELIVERY_PERSON'].includes(stored.user.role)
   ) {
     throw new AppError('Refresh token invalid', 401);
+  }
+
+  const userRole = stored.user.role;
+  const isDelivery = userRole === 'DELIVERY_PERSON' || stored.user.staffRole === 'DELIVERY_PERSON';
+  const isAdmin = ['ADMIN', 'MANAGER', 'SUPER_ADMIN'].includes(userRole) || ['ADMIN', 'MANAGER', 'SUPER_ADMIN'].includes(stored.user.staffRole);
+
+  if (role === 'ADMIN' && !isAdmin) {
+    throw new AppError('Unauthorized refresh request for admin portal', 403);
+  }
+  if (role === 'DELIVERY' && !isDelivery) {
+    throw new AppError('Unauthorized refresh request for delivery portal', 403);
+  }
+  if (!role && isAdmin) {
+    throw new AppError('Admin session cannot be refreshed on customer portal', 403);
   }
 
   if (!stored.revokedAt) {

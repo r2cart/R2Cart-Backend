@@ -11,6 +11,7 @@ const authCustomer = [authenticate, authorize('CUSTOMER', 'ADMIN', 'MANAGER')];
 customerRouter.put('/products/:id/rating', authCustomer, rateProduct);
 customerRouter.get('/users/me', authCustomer, c.profile.get);
 customerRouter.patch('/users/me', authCustomer, c.profile.update);
+customerRouter.delete('/users/me', authCustomer, c.profile.deleteAccount);
 customerRouter.get('/addresses', authCustomer, c.addresses.list);
 customerRouter.post('/addresses', authCustomer, validate(addressSchema), c.addresses.create);
 customerRouter.patch('/addresses/:id', authCustomer, validate(addressUpdateSchema), c.addresses.update);

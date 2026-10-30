@@ -10,7 +10,76 @@ import {getAvailableCustomerSlots} from './admin-scheduling.controller.js';
 import {consumeFifoBatches, reverseFifoAllocations} from '../services/fifo.service.js';
 import {invalidateAdminDashboard, invalidateProducts} from '../services/cache.service.js';
 const profileDto=user=>({id:user.id,name:user.name,email:user.email,mobile:user.mobile,role:user.role,status:user.status});
-export const profile={get:asyncHandler(async(req,res)=>ok(res,profileDto(req.user))),update:asyncHandler(async(req,res)=>{const name=String(req.body.name||'').trim(),mobile=String(req.body.mobile||'').replace(/\D/g,'');if(name.length<2)throw new AppError('Enter a valid full name',422);if(!/^\d{10}$/.test(mobile))throw new AppError('Enter a valid 10-digit mobile number',422);const existing=await prisma.user.findFirst({where:{mobile,id:{not:req.user.id}}});if(existing)throw new AppError('This mobile number is already linked to another account',409);ok(res,profileDto(await prisma.user.update({where:{id:req.user.id},data:{name,mobile}})),'Profile updated')})};
+export const profile = {
+  get: asyncHandler(async (req, res) => ok(res, profileDto(req.user))),
+  update: asyncHandler(async (req, res) => {
+    const name = String(req.body.name || '').trim(),
+      mobile = String(req.body.mobile || '').replace(/\D/g, '');
+    if (name.length < 2) throw new AppError('Enter a valid full name', 422);
+    if (!/^\d{10}$/.test(mobile)) throw new AppError('Enter a valid 10-digit mobile number', 422);
+    const existing = await prisma.user.findFirst({ where: { mobile, id: { not: req.user.id } } });
+    if (existing) throw new AppError('This mobile number is already linked to another account', 409);
+    ok(
+      res,
+      profileDto(await prisma.user.update({ where: { id: req.user.id }, data: { name, mobile } })),
+      'Profile updated'
+    );
+  }),
+  deleteAccount: asyncHandler(async (req, res) => {
+    const id = req.user.id;
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) throw new AppError('User not found', 404);
+
+    await prisma.$transaction(
+      async tx => {
+        // 1. Gather all customer orders
+        const userOrders = await tx.order.findMany({
+          where: { userId: id },
+          select: { id: true },
+        });
+        const orderIds = userOrders.map(o => o.id);
+
+        // 2. Cascade delete order dependencies if orders exist
+        if (orderIds.length > 0) {
+          await Promise.all([
+            tx.payment.deleteMany({ where: { orderId: { in: orderIds } } }),
+            tx.orderFifoAllocation.deleteMany({ where: { orderId: { in: orderIds } } }),
+            tx.deliveryAssignment.deleteMany({ where: { orderId: { in: orderIds } } }),
+            tx.orderStatusHistory.deleteMany({ where: { orderId: { in: orderIds } } }),
+            tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } }),
+          ]);
+          await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+        }
+
+        // 3. Delete all direct customer dependencies
+        await Promise.all([
+          tx.ticketMessage.deleteMany({ where: { ticket: { userId: id } } }),
+          tx.supportTicket.deleteMany({ where: { userId: id } }),
+          tx.couponUsage.deleteMany({ where: { userId: id } }),
+          tx.productRating.deleteMany({ where: { userId: id } }),
+          tx.cartItem.deleteMany({ where: { cart: { userId: id } } }),
+          tx.cart.deleteMany({ where: { userId: id } }),
+          tx.favorite.deleteMany({ where: { userId: id } }),
+          tx.address.deleteMany({ where: { userId: id } }),
+          tx.refreshToken.deleteMany({ where: { userId: id } }),
+          tx.searchHistory.deleteMany({ where: { userId: id } }),
+          tx.pushSubscription.deleteMany({ where: { userId: id } }),
+          tx.deviceToken.deleteMany({ where: { userId: id } }),
+          tx.deliveryChatMessage.deleteMany({ where: { senderId: id } }),
+        ]);
+
+        // 4. Finally delete customer record from users table
+        await tx.user.delete({ where: { id } });
+      },
+      {
+        maxWait: 15000,
+        timeout: 45000,
+      }
+    );
+
+    ok(res, { id }, 'Account and associated data deleted successfully');
+  }),
+};
 const verifyDeliveryArea=area=>resolveDeliveryRules(prisma,area);
 const ALLOWED_ADDRESS_FIELDS = [
   'name',
