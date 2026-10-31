@@ -318,10 +318,108 @@ export const checkout=asyncHandler(async(req,res)=>{
     if(!matched.isAvailable)throw new AppError(`The slot "${matched.label}" is not available`,422);
   }
 
+  // 1. If active items sent from client checkout, sync database cart to eliminate any stale ghost items
+  if (Array.isArray(req.body.items) && req.body.items.length > 0) {
+    const userCart = await prisma.cart.upsert({
+      where: { userId: req.user.id },
+      update: {},
+      create: { userId: req.user.id }
+    });
+    await prisma.cartItem.deleteMany({ where: { cartId: userCart.id } });
+    for (const itm of req.body.items) {
+      if (itm.productId && Number(itm.quantity) > 0) {
+        await prisma.cartItem.create({
+          data: {
+            cartId: userCart.id,
+            productId: itm.productId,
+            quantity: Number(itm.quantity)
+          }
+        }).catch(() => {});
+      }
+    }
+  }
+
   const address=await prisma.address.findFirst({where:{id:addressId,userId:req.user.id}});
   if(!address)throw new AppError('Delivery address not found',404);
 
-  const rules=await resolveDeliveryRules(prisma,address.area);
+  // 2. Fetch current cart items to determine delivery scope eligibility
+  const userCartData = await prisma.cart.findUnique({
+    where: { userId: req.user.id },
+    include: { items: { include: { product: true } } }
+  });
+  const cartItems = userCartData?.items || [];
+  if (!cartItems.length) throw new AppError('Your basket is empty', 400);
+
+  // Categorize items by delivery scope
+  const localItems = [];
+  const panIndiaItems = [];
+  const customItems = [];
+
+  for (const itm of cartItems) {
+    const scope = itm.product?.deliveryScope || 'LOCAL';
+    if (scope === 'PAN_INDIA') {
+      panIndiaItems.push(itm);
+    } else if (scope === 'CUSTOM') {
+      customItems.push(itm);
+    } else {
+      localItems.push(itm);
+    }
+  }
+
+  // Validate custom delivery locations against address
+  for (const itm of customItems) {
+    const rawLocs = Array.isArray(itm.product?.deliveryLocations)
+      ? itm.product.deliveryLocations
+      : (typeof itm.product?.deliveryLocations === 'string' ? itm.product.deliveryLocations.split(',') : []);
+    const normalizedLocs = rawLocs.map(x => String(x || '').trim().toLowerCase()).filter(Boolean);
+    const addrPin = String(address.pin || '').trim().toLowerCase();
+    const addrCity = String(address.city || '').trim().toLowerCase();
+    const addrState = String(address.state || '').trim().toLowerCase();
+    const addrArea = String(address.area || '').trim().toLowerCase();
+
+    const isMatch = normalizedLocs.some(loc =>
+      loc === addrPin ||
+      loc === addrCity ||
+      loc === addrState ||
+      loc === addrArea ||
+      (addrCity && addrCity.includes(loc)) ||
+      (addrState && addrState.includes(loc))
+    );
+
+    if (!isMatch) {
+      const displayLocs = rawLocs.join(', ');
+      throw new AppError(`"${itm.product.name}" cannot be delivered to ${address.city || address.pin || address.area}. This product is only available in: ${displayLocs}`, 422);
+    }
+  }
+
+  // 3. Resolve delivery rules based on local vs courier pan-india
+  let rules;
+  try {
+    rules = await resolveDeliveryRules(prisma, address.area || address.city);
+  } catch (err) {
+    if (localItems.length === 0) {
+      // All items in cart are Pan-India or Custom matched!
+      const totalShippingFee = cartItems.reduce((acc, itm) => acc + (Number(itm.product?.shippingFee) || 0), 0);
+      rules = {
+        matchType: 'COURIER_PAN_INDIA',
+        villageId: null,
+        villageName: `${address.city || address.state || 'India'} (Courier Delivery)`,
+        zoneId: null,
+        zoneName: 'All-India Shipping',
+        minimumOrder: 0,
+        deliveryFee: totalShippingFee,
+        freeDeliveryThreshold: 0,
+        estimatedDelivery: '3-7 Business Days (Courier)',
+        schedule: null,
+        allowCod: true,
+        allowScheduled: false,
+        sources: {}
+      };
+    } else {
+      const localNames = localItems.map(i => i.product?.name).filter(Boolean).slice(0, 3).join(', ');
+      throw new AppError(`"${localNames}" is only available for local store delivery in our local service areas. Please remove it from your basket to place an All-India shipping order.`, 422);
+    }
+  }
 
   if (storeSchedule.isEmergencyActive) {
     const em = storeSchedule.emergencyDetails;
@@ -343,27 +441,6 @@ export const checkout=asyncHandler(async(req,res)=>{
 
   if(req.body.paymentMethod==='COD'&&rules.allowCod===false){
     throw new AppError(`Cash on Delivery is currently unavailable for ${rules.villageName||address.area}.`,422);
-  }
-
-  // If active items sent from client checkout, sync database cart to eliminate any stale ghost items
-  if (Array.isArray(req.body.items) && req.body.items.length > 0) {
-    const userCart = await prisma.cart.upsert({
-      where: { userId: req.user.id },
-      update: {},
-      create: { userId: req.user.id }
-    });
-    await prisma.cartItem.deleteMany({ where: { cartId: userCart.id } });
-    for (const itm of req.body.items) {
-      if (itm.productId && Number(itm.quantity) > 0) {
-        await prisma.cartItem.create({
-          data: {
-            cartId: userCart.id,
-            productId: itm.productId,
-            quantity: Number(itm.quantity)
-          }
-        }).catch(() => {});
-      }
-    }
   }
 
   const addressSnapshot={id:address.id,name:address.name,fullName:address.name,mobile:address.mobile,house:address.house,street:address.street||'',landmark:address.landmark||'',area:address.area,villageName:rules.villageName||address.area,villageId:rules.villageId||rules.zoneId||null,city:address.city,district:address.district||'',state:address.state||'',pin:address.pin||'',pincode:address.pin||'',type:address.type||'Home',deliveryZone:{id:rules.villageId||rules.zoneId,name:rules.villageName||rules.zoneName,estimatedDelivery:rules.estimatedDelivery}};

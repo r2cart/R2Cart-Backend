@@ -207,7 +207,10 @@ export async function calculateCart(tx, userId, couponCode, rules) {
   }
 
   const productDiscount = itemTotal - subtotal;
-  const deliveryFee = subtotal >= delivery.freeDeliveryThreshold ? 0 : delivery.deliveryFee;
+  const extraShippingFees = cart.items.reduce((acc, itm) => acc + (Number(itm.product?.shippingFee) || 0), 0);
+  const deliveryFee = (subtotal >= delivery.freeDeliveryThreshold && delivery.freeDeliveryThreshold > 0)
+    ? extraShippingFees
+    : ((Number(delivery.deliveryFee) || 0) + extraShippingFees);
   const handlingFee = 0;
   const grandTotal = Math.max(0, subtotal + deliveryFee - couponDiscount);
 

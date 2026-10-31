@@ -185,6 +185,9 @@ model Product {
   hasExpiry         Boolean        @default(false)
   expiryDate        DateTime?
   batchNumber       String?
+  deliveryScope     String         @default("LOCAL") // "LOCAL" | "PAN_INDIA" | "CUSTOM"
+  deliveryLocations Json?
+  shippingFee       Decimal?       @default(0) @db.Decimal(10, 2)
   ratings           ProductRating[]
   category          Category       @relation(fields: [categoryId], references: [id])
   images            ProductImage[]

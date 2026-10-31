@@ -97,6 +97,43 @@ export async function ensureCategoryAdminColumns() {
   }
 }
 
+export async function ensureProductDeliveryScopeColumns() {
+  try {
+    const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+    if (isPostgres) {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "deliveryScope" VARCHAR(32) DEFAULT 'LOCAL';
+        ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "deliveryLocations" JSONB;
+        ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "shippingFee" DECIMAL(10,2) DEFAULT 0.00;
+      `).catch(() => {});
+    } else {
+      const existing = await prisma.$queryRawUnsafe(`
+        SELECT COLUMN_NAME 
+        FROM information_schema.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'products' 
+          AND COLUMN_NAME IN ('deliveryScope', 'deliveryLocations', 'shippingFee')
+      `);
+      const found = (existing || []).map(r => r.COLUMN_NAME);
+      if (!found.includes('deliveryScope')) {
+        console.log('[Schema] Adding missing column: products.deliveryScope');
+        await prisma.$executeRawUnsafe(`ALTER TABLE \`products\` ADD COLUMN \`deliveryScope\` VARCHAR(32) NOT NULL DEFAULT 'LOCAL'`);
+      }
+      if (!found.includes('deliveryLocations')) {
+        console.log('[Schema] Adding missing column: products.deliveryLocations');
+        await prisma.$executeRawUnsafe(`ALTER TABLE \`products\` ADD COLUMN \`deliveryLocations\` JSON NULL`);
+      }
+      if (!found.includes('shippingFee')) {
+        console.log('[Schema] Adding missing column: products.shippingFee');
+        await prisma.$executeRawUnsafe(`ALTER TABLE \`products\` ADD COLUMN \`shippingFee\` DECIMAL(10,2) NULL DEFAULT 0.00`);
+      }
+    }
+    console.log('[Schema] Product delivery scope columns verified.');
+  } catch (err) {
+    console.warn('[Schema] Product delivery scope verify notice:', err.message);
+  }
+}
+
 export async function ensureDeliveryStaffColumns() {
   try {
     const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');

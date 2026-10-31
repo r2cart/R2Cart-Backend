@@ -80,6 +80,14 @@ export function validateImport(rows,categories,existing=[]){
   }
   if(image&&imageFile)errors.push('Use either Image URL or Image Filename, not both');
 
+  const deliveryScope = ['PAN_INDIA', 'CUSTOM'].includes(String(row.deliveryScope || '').trim().toUpperCase())
+    ? String(row.deliveryScope).trim().toUpperCase()
+    : 'LOCAL';
+  const deliveryLocations = row.deliveryLocations
+    ? String(row.deliveryLocations).split(';').map(s => s.trim()).filter(Boolean)
+    : null;
+  const shippingFee = row.shippingFee ? Number(row.shippingFee) || 0 : 0;
+
   const data={
    id:matchedExisting?matchedExisting.id:null,
    sku:matchedExisting?matchedExisting.sku:(rowSku||null),
@@ -95,6 +103,9 @@ export function validateImport(rows,categories,existing=[]){
    imageFile,
    status,
    action,
+   deliveryScope,
+   deliveryLocations,
+   shippingFee,
    currentValues:matchedExisting?{
     mrp:Number(matchedExisting.mrp),
     price:Number(matchedExisting.price),
@@ -170,6 +181,9 @@ export async function exportProductsData(categorySlug, allowedCategoryIds = null
   stock:p.stock,
   lowStockThreshold:p.lowStockThreshold||10,
   status:p.status,
+  deliveryScope:p.deliveryScope||'LOCAL',
+  deliveryLocations:Array.isArray(p.deliveryLocations)?p.deliveryLocations.join(';'):'',
+  shippingFee:Number(p.shippingFee||0),
   description:p.description||'',
   groupCode:p.variantGroupId||'',
   image:p.images?.[0]?.url||''
@@ -218,7 +232,10 @@ export async function importProducts(rows){
      status:data.status,
      ...(data.lowStockThreshold!==undefined?{lowStockThreshold:data.lowStockThreshold}:{}),
      ...(data.description?{description:data.description}:{}),
-     ...(data.categoryId?{categoryId:data.categoryId}:{})
+     ...(data.categoryId?{categoryId:data.categoryId}:{}),
+     ...(data.deliveryScope?{deliveryScope:data.deliveryScope}:{}),
+     ...(data.deliveryLocations!==undefined?{deliveryLocations:data.deliveryLocations}:{}),
+     ...(data.shippingFee!==undefined?{shippingFee:data.shippingFee}:{})
     };
     const updated=await tx.product.update({
      where:{id:data.id},

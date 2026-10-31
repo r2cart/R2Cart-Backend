@@ -69,12 +69,47 @@ export const uploadStoreLogo=asyncHandler(async(req,res)=>{
  const filename=saveLocalFallback(req.file.buffer,'settings');
  created(res,{url:`${req.protocol}://${req.get('host')}/uploads/settings/${filename}`},'Store logo uploaded locally');
 });
+const VALID_DELIVERY_SCOPES = ['LOCAL', 'PAN_INDIA', 'CUSTOM'];
+
 const productData=body=>{
  const status=String(body.status||'ACTIVE').trim().toUpperCase();
  if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Invalid product status',422);
  const threshold=body.lowStockThreshold===undefined?undefined:Number(body.lowStockThreshold);
  if(threshold!==undefined&&(!Number.isInteger(threshold)||threshold<0||threshold>2147483647))throw new AppError('Enter a valid whole-number stock alert threshold',422);
- return {name:String(body.name||'').trim(),description:String(body.description||'').trim(),...variantData(body),...(threshold!==undefined&&{lowStockThreshold:threshold}),status,featured:Boolean(body.featured),bestSeller:Boolean(body.bestSeller)};
+
+ let deliveryScope = String(body.deliveryScope || 'LOCAL').trim().toUpperCase();
+ if (!VALID_DELIVERY_SCOPES.includes(deliveryScope)) {
+   deliveryScope = 'LOCAL';
+ }
+
+ let deliveryLocations = null;
+ if (deliveryScope === 'CUSTOM') {
+   if (Array.isArray(body.deliveryLocations)) {
+     deliveryLocations = body.deliveryLocations.map(l => String(l || '').trim()).filter(Boolean);
+   } else if (typeof body.deliveryLocations === 'string') {
+     deliveryLocations = body.deliveryLocations.split(',').map(l => l.trim()).filter(Boolean);
+   }
+   if (!deliveryLocations || deliveryLocations.length === 0) {
+     throw new AppError('Please specify at least one city, state, or pincode for custom delivery locations', 422);
+   }
+ }
+
+ const shippingFee = body.shippingFee !== undefined && body.shippingFee !== null && body.shippingFee !== ''
+   ? Math.max(0, Number(body.shippingFee) || 0)
+   : 0;
+
+ return {
+   name:String(body.name||'').trim(),
+   description:String(body.description||'').trim(),
+   ...variantData(body),
+   ...(threshold!==undefined&&{lowStockThreshold:threshold}),
+   status,
+   featured:Boolean(body.featured),
+   bestSeller:Boolean(body.bestSeller),
+   deliveryScope,
+   deliveryLocations,
+   shippingFee
+ };
 };
 const productInclude={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
 async function uniqueProductSlug(name){const base=name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||`product-${Date.now()}`;let slug=base,index=2;while(await prisma.product.findUnique({where:{slug},select:{id:true}}))slug=`${base}-${index++}`;return slug}
@@ -211,6 +246,9 @@ export const products={
               categoryId: cat.id,
               featured: data.featured,
               bestSeller: data.bestSeller,
+              deliveryScope: data.deliveryScope,
+              deliveryLocations: data.deliveryLocations,
+              shippingFee: data.shippingFee,
               ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold }),
               variantGroupId: effectiveGroupId,
               ...(imageUrls && { images: { deleteMany: {}, create: imageUrls.map((url, position) => ({ url, position })) } })

@@ -641,4 +641,103 @@ describe('Category-Based Admin RBAC and Authorization System', () => {
       expect(hasPermission(superAdmin, 'reports.view_financial')).toBe(true);
     });
   });
+
+  describe('8. Product Delivery Scope & Shipping Configuration', () => {
+    it('accepts PAN_INDIA and CUSTOM deliveryScope on product creation', async () => {
+      const resinAdmin = {
+        id: 'cat-admin-resin',
+        role: 'ADMIN',
+        staffRole: 'CATEGORY_ADMIN',
+        status: 'ACTIVE',
+        isStaffActive: true,
+        assignedCategoryIds: ['cat-resin-id'],
+        permissions: { 'products.create': true }
+      };
+
+      db.category.findMany.mockResolvedValue([
+        { id: 'cat-resin-id', slug: 'resin-art', name: 'Resin Art', status: 'ACTIVE' }
+      ]);
+      db.category.findUnique.mockResolvedValue({ id: 'cat-resin-id', slug: 'resin-art', name: 'Resin Art' });
+      db.product.findUnique.mockResolvedValue(null);
+      db.product.create.mockResolvedValue({
+        id: 'prod-resin-clock',
+        name: 'Resin Art Clock',
+        price: 1999,
+        mrp: 2999,
+        stock: 10,
+        deliveryScope: 'PAN_INDIA',
+        shippingFee: 99,
+        categoryId: 'cat-resin-id'
+      });
+
+      const req = {
+        user: resinAdmin,
+        body: {
+          name: 'Resin Art Clock',
+          description: 'Handcrafted luxury wall clock',
+          category: 'resin-art',
+          unit: '1 Piece',
+          price: 1999,
+          mrp: 2999,
+          stock: 10,
+          deliveryScope: 'PAN_INDIA',
+          shippingFee: 99,
+          image: 'https://res.cloudinary.com/demo/image/upload/sample.jpg'
+        }
+      };
+
+      let createdData = null;
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn((data) => { createdData = data; return res; })
+      };
+
+      await products.create(req, res);
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(createdData.data.deliveryScope).toBe('PAN_INDIA');
+      expect(Number(createdData.data.shippingFee)).toBe(99);
+    });
+
+    it('rejects CUSTOM deliveryScope when deliveryLocations is missing or empty', async () => {
+      const resinAdmin = {
+        id: 'cat-admin-resin',
+        role: 'ADMIN',
+        staffRole: 'CATEGORY_ADMIN',
+        status: 'ACTIVE',
+        isStaffActive: true,
+        assignedCategoryIds: ['cat-resin-id'],
+        permissions: { 'products.create': true }
+      };
+
+      db.category.findMany.mockResolvedValue([
+        { id: 'cat-resin-id', slug: 'resin-art', name: 'Resin Art', status: 'ACTIVE' }
+      ]);
+      db.category.findUnique.mockResolvedValue({ id: 'cat-resin-id', slug: 'resin-art', name: 'Resin Art' });
+
+      const req = {
+        user: resinAdmin,
+        body: {
+          name: 'Resin Art Coaster',
+          description: 'Custom epoxy resin coaster',
+          category: 'resin-art',
+          unit: 'Set of 4',
+          price: 499,
+          mrp: 699,
+          stock: 20,
+          deliveryScope: 'CUSTOM',
+          deliveryLocations: [], // Empty!
+          image: 'https://res.cloudinary.com/demo/image/upload/sample.jpg'
+        }
+      };
+
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn()
+      };
+
+      await expect(products.create(req, res)).rejects.toThrow(
+        /Please specify at least one city, state, or pincode/
+      );
+    });
+  });
 });
