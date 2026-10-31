@@ -239,6 +239,22 @@ export function hasPermission(user, requiredPermission) {
     return false;
   }
 
+  // Category Admins are completely isolated from global store logistics, delivery hub, and storewide settings
+  const isCategoryAdmin = user.staffRole === 'CATEGORY_ADMIN';
+  const hasAssignedCategoryField = Array.isArray(user.assignedCategoryIds) && user.assignedCategoryIds.length > 0;
+  const isCategoryScoped = isCategoryAdmin || hasAssignedCategoryField;
+
+  if (isCategoryScoped) {
+    if (
+      requiredPermission.startsWith('delivery.') ||
+      requiredPermission.startsWith('scheduling.') ||
+      requiredPermission.startsWith('banners.') ||
+      requiredPermission.startsWith('coupons.')
+    ) {
+      return false;
+    }
+  }
+
   // Wildcard / Full admin grant
   if (perms.all === true || perms['*'] === true) {
     return true;
