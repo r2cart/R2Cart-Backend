@@ -71,37 +71,48 @@ export const uploadStoreLogo=asyncHandler(async(req,res)=>{
 });
 const VALID_DELIVERY_SCOPES = ['LOCAL', 'PAN_INDIA', 'CUSTOM'];
 
-const productData=body=>{
+const productData=(body, user)=>{
  const status=String(body.status||'ACTIVE').trim().toUpperCase();
  if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Invalid product status',422);
  const threshold=body.lowStockThreshold===undefined?undefined:Number(body.lowStockThreshold);
  if(threshold!==undefined&&(!Number.isInteger(threshold)||threshold<0||threshold>2147483647))throw new AppError('Enter a valid whole-number stock alert threshold',422);
 
- let deliveryScope = String(body.deliveryScope || 'LOCAL').trim().toUpperCase();
- if (!VALID_DELIVERY_SCOPES.includes(deliveryScope)) {
-   deliveryScope = 'LOCAL';
- }
+ // Delivery scope and order mode customization is reserved exclusively for locally created / category-scoped admins
+ const isScoped = user?.staffRole === 'CATEGORY_ADMIN' || (Array.isArray(user?.assignedCategoryIds) && user.assignedCategoryIds.length > 0);
+ const isSuper = user?.role === 'SUPER_ADMIN' || user?.staffRole === 'SUPER_ADMIN';
+ const allowsSpecialtyScoping = isScoped || isSuper;
 
+ let deliveryScope = 'LOCAL';
  let deliveryLocations = null;
- if (deliveryScope === 'CUSTOM') {
-   if (Array.isArray(body.deliveryLocations)) {
-     deliveryLocations = body.deliveryLocations.map(l => String(l || '').trim()).filter(Boolean);
-   } else if (typeof body.deliveryLocations === 'string') {
-     deliveryLocations = body.deliveryLocations.split(',').map(l => l.trim()).filter(Boolean);
-   }
-   if (!deliveryLocations || deliveryLocations.length === 0) {
-     throw new AppError('Please specify at least one city, state, or pincode for custom delivery locations', 422);
-   }
- }
+ let shippingFee = 0;
+ let orderMode = 'DIRECT_ORDER';
 
- const shippingFee = body.shippingFee !== undefined && body.shippingFee !== null && body.shippingFee !== ''
-   ? Math.max(0, Number(body.shippingFee) || 0)
-   : 0;
+ if (allowsSpecialtyScoping) {
+   let reqScope = String(body.deliveryScope || 'LOCAL').trim().toUpperCase();
+   if (VALID_DELIVERY_SCOPES.includes(reqScope)) {
+     deliveryScope = reqScope;
+   }
 
- const VALID_ORDER_MODES = ['DIRECT_ORDER', 'CONTACT_REQUEST', 'BOTH'];
- let orderMode = String(body.orderMode || 'DIRECT_ORDER').trim().toUpperCase();
- if (!VALID_ORDER_MODES.includes(orderMode)) {
-   orderMode = 'DIRECT_ORDER';
+   if (deliveryScope === 'CUSTOM') {
+     if (Array.isArray(body.deliveryLocations)) {
+       deliveryLocations = body.deliveryLocations.map(l => String(l || '').trim()).filter(Boolean);
+     } else if (typeof body.deliveryLocations === 'string') {
+       deliveryLocations = body.deliveryLocations.split(',').map(l => l.trim()).filter(Boolean);
+     }
+     if (!deliveryLocations || deliveryLocations.length === 0) {
+       throw new AppError('Please specify at least one city, state, or pincode for custom delivery locations', 422);
+     }
+   }
+
+   if (body.shippingFee !== undefined && body.shippingFee !== null && body.shippingFee !== '') {
+     shippingFee = Math.max(0, Number(body.shippingFee) || 0);
+   }
+
+   const VALID_ORDER_MODES = ['DIRECT_ORDER', 'CONTACT_REQUEST', 'BOTH'];
+   let reqOrderMode = String(body.orderMode || 'DIRECT_ORDER').trim().toUpperCase();
+   if (VALID_ORDER_MODES.includes(reqOrderMode)) {
+     orderMode = reqOrderMode;
+   }
  }
 
  return {
@@ -128,7 +139,7 @@ export const products={
   if(!imageUrls.length)throw new AppError('At least 1 product image is required (Cover image)',422);
   if(imageUrls.length>8)throw new AppError('Maximum 8 product images allowed',422);
 
-  const data=productData(req.body);
+  const data=productData(req.body, req.user);
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
   const scope=await resolveUserCategoryScope(req.user);
@@ -172,7 +183,7 @@ export const products={
     if(!imageUrls.length)throw new AppError('At least 1 product image is required (Cover image)',422);
     if(imageUrls.length>8)throw new AppError('Maximum 8 product images allowed',422);
   }
-  const data=productData(req.body);
+  const data=productData(req.body, req.user);
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
   if(scope.isScoped&&!scope.categoryIds.includes(cat.id)){
