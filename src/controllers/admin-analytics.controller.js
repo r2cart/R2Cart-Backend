@@ -308,9 +308,4 @@ export const analytics = {
     res.setHeader('Content-Disposition', `attachment; filename="r2cart_${reportType}_${bounds.preset}_${Date.now()}.csv"`);
     res.status(200).send(csvContent);
   })
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="r2cart_${reportType}_${bounds.preset}_${Date.now()}.csv"`);
-    res.status(200).send(csvContent);
-  })
 };
