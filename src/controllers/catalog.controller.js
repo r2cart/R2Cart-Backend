@@ -7,6 +7,7 @@ import {getAvailableCustomerSlots} from './admin-scheduling.controller.js';
 import {resolveEffectiveStoreSchedule} from '../services/store-operations.service.js';
 import {smartSearchProducts} from '../services/search.service.js';
 import {cache} from '../services/cache.service.js';
+import {sendFcmToAdminsNewEnquiry} from '../services/fcm.service.js';
 
 export const categories=asyncHandler(async(req,res)=>{
   res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
@@ -341,6 +342,11 @@ export const submitProductEnquiry = asyncHandler(async (req, res) => {
         }
       }
     }
+  });
+
+  // Notify assigned category admin and super admin in real time
+  sendFcmToAdminsNewEnquiry(enquiry, product).catch(err => {
+    console.error('[EnquiryAlert] FCM dispatch error:', err.message);
   });
 
   res.status(201).json({

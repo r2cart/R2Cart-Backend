@@ -108,19 +108,38 @@ export async function sendFcmToAdminsNewOrder(order) {
       where: {
         OR: [
           { role: 'ADMIN' },
-          { user: { role: 'ADMIN' } },
+          { user: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } } },
         ],
       },
+      include: {
+        user: {
+          select: { id: true, role: true, staffRole: true, assignedCategoryIds: true }
+        }
+      }
     });
 
     if (!adminTokens.length) return;
+
+    // Filter tokens: Category-scoped admin only receives alert if this order includes their assigned category
+    const orderCatIds = new Set((order.items || []).map(i => i.product?.categoryId).filter(Boolean));
+    const eligibleTokens = adminTokens.filter(t => {
+      const u = t.user;
+      if (!u) return true;
+      if (u.role === 'SUPER_ADMIN' || u.staffRole === 'SUPER_ADMIN') return true;
+      const assigned = Array.isArray(u.assignedCategoryIds) ? u.assignedCategoryIds : [];
+      const isScoped = u.staffRole === 'CATEGORY_ADMIN' || assigned.length > 0;
+      if (!isScoped) return true; // Global store manager
+      return assigned.some(cid => orderCatIds.has(cid));
+    });
+
+    if (!eligibleTokens.length) return;
 
     const customerName = order.user?.name || order.addressSnapshot?.name || 'A customer';
     const total = Number(order.grandTotal || 0).toLocaleString('en-IN');
     const itemsCount = order.items?.length || 1;
 
     await sendFcmMulticast({
-      tokens: adminTokens.map((t) => t.token),
+      tokens: eligibleTokens.map((t) => t.token),
       notification: {
         title: '🚨 New Order Received!',
         body: `Order #${order.orderNumber} for ₹${total} (${itemsCount} items) placed by ${customerName}.`,
@@ -134,6 +153,54 @@ export async function sendFcmToAdminsNewOrder(order) {
     });
   } catch (err) {
     console.error('Error in sendFcmToAdminsNewOrder:', err.message);
+  }
+}
+
+export async function sendFcmToAdminsNewEnquiry(enquiry, product) {
+  try {
+    const adminTokens = await prisma.deviceToken.findMany({
+      where: {
+        OR: [
+          { role: 'ADMIN' },
+          { user: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } } },
+        ],
+      },
+      include: {
+        user: {
+          select: { id: true, role: true, staffRole: true, assignedCategoryIds: true }
+        }
+      }
+    });
+
+    if (!adminTokens.length) return;
+
+    const prodCatId = product?.categoryId;
+    const eligibleTokens = adminTokens.filter(t => {
+      const u = t.user;
+      if (!u) return true;
+      if (u.role === 'SUPER_ADMIN' || u.staffRole === 'SUPER_ADMIN') return true;
+      const assigned = Array.isArray(u.assignedCategoryIds) ? u.assignedCategoryIds : [];
+      const isScoped = u.staffRole === 'CATEGORY_ADMIN' || assigned.length > 0;
+      if (!isScoped) return true; // Global admin
+      return prodCatId && assigned.includes(prodCatId);
+    });
+
+    if (!eligibleTokens.length) return;
+
+    await sendFcmMulticast({
+      tokens: eligibleTokens.map((t) => t.token),
+      notification: {
+        title: `📞 New Inquiry: ${enquiry.name || 'Customer'}`,
+        body: `Custom inquiry for "${product?.name || 'Product'}". Phone: ${enquiry.phone}`,
+      },
+      data: {
+        url: `/admin/enquiries`,
+        enquiryId: String(enquiry.id),
+        type: 'ADMIN_NEW_ENQUIRY',
+      },
+    });
+  } catch (err) {
+    console.error('Error in sendFcmToAdminsNewEnquiry:', err.message);
   }
 }
 
