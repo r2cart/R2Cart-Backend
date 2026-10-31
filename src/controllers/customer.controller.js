@@ -139,16 +139,19 @@ export const addresses = {
   create: asyncHandler(async (req, res) => {
     const data = pickAddressFields(req.body, false);
     if (!data.name || data.name.length < 2) {
-      throw new AppError('Enter a valid full name (at least 2 characters)', 422);
+      throw new AppError('Please enter your full name (at least 2 characters)', 422);
     }
-    if (!data.mobile || data.mobile.length < 10) {
-      throw new AppError('Enter a valid 10-digit mobile number', 422);
+    if (!data.mobile || !/^\d{10}$/.test(data.mobile)) {
+      throw new AppError('Please enter a valid 10-digit mobile number', 422);
     }
     if (!data.area) {
-      throw new AppError('Area / village is required', 422);
+      throw new AppError('Delivery area / city is required', 422);
     }
 
-    await verifyDeliveryArea(data.area);
+    const isPanIndiaAddress = Boolean(data.pin || (data.city && data.city.toLowerCase() !== 'hathua'));
+    if (!isPanIndiaAddress) {
+      await verifyDeliveryArea(data.area);
+    }
 
     if (data.isDefault) {
       await prisma.address.updateMany({
@@ -181,12 +184,15 @@ export const addresses = {
     }
 
     if (data.name !== undefined && data.name.length < 2) {
-      throw new AppError('Enter a valid full name (at least 2 characters)', 422);
+      throw new AppError('Please enter your full name (at least 2 characters)', 422);
     }
-    if (data.mobile !== undefined && data.mobile.length < 10) {
-      throw new AppError('Enter a valid 10-digit mobile number', 422);
+    if (data.mobile !== undefined && !/^\d{10}$/.test(data.mobile)) {
+      throw new AppError('Please enter a valid 10-digit mobile number', 422);
     }
-    if (data.area !== undefined) {
+    const effCity = data.city || existing.city;
+    const effPin = data.pin !== undefined ? data.pin : existing.pin;
+    const isPanIndia = Boolean(effPin || (effCity && effCity.toLowerCase() !== 'hathua'));
+    if (data.area !== undefined && !isPanIndia) {
       await verifyDeliveryArea(data.area);
     }
 
