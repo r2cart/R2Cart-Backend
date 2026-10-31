@@ -59,6 +59,7 @@ export const orders={
  get:asyncHandler(async(req,res)=>{const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}]},include:orderDetailsInclude});if(!row)throw new AppError('Order not found',404);ok(res,orderDto(row))}),
  status:asyncHandler(async(req,res)=>{
   const status=normalizeOrderStatus(req.body.status);
+  const reason=String(req.body.reason||req.body.note||'').trim();
   const row=await prisma.$transaction(async tx=>{
    const current=await tx.order.findUnique({where:{id:req.params.id},include:{items:true}});
    if(!current)throw new AppError('Order not found',404);
@@ -91,7 +92,7 @@ export const orders={
         previousStock:prevStock,
         newStock:prevStock+item.quantity,
         quantityDiff:item.quantity,
-        reason:`Order cancelled #${current.orderNumber}`,
+        reason:`Admin cancellation #${current.orderNumber}${reason ? ': ' + reason : ''}`,
         orderId:current.id,
         adminId:req.user?.id||null,
         adminName:req.user?.name||'Admin'
@@ -99,9 +100,13 @@ export const orders={
       });
      }
     }
-    await reverseFifoAllocations(tx, { orderId: current.id, reason: `Admin cancellation #${current.orderNumber}` });
+    await reverseFifoAllocations(tx, { orderId: current.id, reason: `Admin cancellation #${current.orderNumber}${reason ? ': ' + reason : ''}` });
    }
-   await tx.orderStatusHistory.create({data:{orderId:current.id,status,note:String(req.body.note||'').trim()||'Status updated by store admin'}});
+   const adminActor = req.user?.name ? `${req.user.name} (${req.user.role || 'Admin'})` : 'Store Admin';
+   const cancelNote = reason ? `Cancelled by admin (${adminActor}): ${reason}` : `Cancelled by admin (${adminActor})`;
+   const historyNote = status === 'CANCELLED' ? cancelNote : (reason || 'Status updated by store admin');
+
+   await tx.orderStatusHistory.create({data:{orderId:current.id,status,note:historyNote}});
    return tx.order.findUnique({where:{id:current.id},include});
   });
   ok(res,orderDto(row),'Order status updated');
@@ -118,11 +123,12 @@ export const orders={
       orderNumber: row.orderNumber,
       status,
       totalAmount: Number(row.grandTotal),
+      reason: reason || null,
       note: req.body.note || null
     }
   });
-  notifyCustomerOrderStatusUpdate(row,status,req.body.note).catch(e=>console.error('Customer status push error:',e.message));
-  sendFcmToCustomerStatusUpdate(row,status,req.body.note).catch(e=>console.error('Customer FCM status push error:',e.message));
+  notifyCustomerOrderStatusUpdate(row,status,reason||req.body.note).catch(e=>console.error('Customer status push error:',e.message));
+  sendFcmToCustomerStatusUpdate(row,status,reason||req.body.note).catch(e=>console.error('Customer FCM status push error:',e.message));
  }),
  modifyItem:asyncHandler(async(req,res)=>{
   const {action='OUT_OF_STOCK',quantity,reason='Out of stock during store packing'}=req.body;

@@ -137,6 +137,41 @@ export async function sendFcmToAdminsNewOrder(order) {
   }
 }
 
+export async function sendFcmToAdminsOrderCancelled(order, reason = '', cancelledByName = 'Customer') {
+  try {
+    const adminTokens = await prisma.deviceToken.findMany({
+      where: {
+        OR: [
+          { role: 'ADMIN' },
+          { role: 'SUPER_ADMIN' },
+          { user: { role: 'ADMIN' } },
+          { user: { role: 'SUPER_ADMIN' } },
+        ],
+      },
+    });
+
+    if (!adminTokens.length) return;
+
+    const reasonText = reason ? `: "${reason}"` : '';
+    await sendFcmMulticast({
+      tokens: adminTokens.map((t) => t.token),
+      notification: {
+        title: `❌ Order #${order.orderNumber} Cancelled`,
+        body: `Cancelled by ${cancelledByName}${reasonText}. Deducted items restored.`,
+      },
+      data: {
+        url: `/admin/orders/${order.id}`,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        reason: reason,
+        type: 'ADMIN_ORDER_CANCELLED',
+      },
+    });
+  } catch (err) {
+    console.error('Error in sendFcmToAdminsOrderCancelled:', err.message);
+  }
+}
+
 export async function sendFcmToCustomerOrderPlaced(order) {
   try {
     if (!order.userId) return;

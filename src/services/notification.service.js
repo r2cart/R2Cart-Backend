@@ -139,6 +139,55 @@ export async function notifyAdminsNewOrder(order) {
   }
 }
 
+export async function notifyAdminsOrderCancelled(order, reason = '', cancelledByName = 'Customer') {
+  try {
+    const adminSubs = await prisma.pushSubscription.findMany({
+      where: {
+        OR: [
+          { role: 'ADMIN' },
+          { role: 'SUPER_ADMIN' },
+          { user: { role: 'ADMIN' } },
+          { user: { role: 'SUPER_ADMIN' } },
+        ],
+      },
+    });
+
+    let targets = adminSubs;
+    if (!targets.length) {
+      targets = await prisma.pushSubscription.findMany({
+        take: 5,
+        orderBy: { updatedAt: 'desc' },
+      });
+    }
+    if (!targets.length) return;
+
+    const reasonText = reason ? `: "${reason}"` : '';
+    const payload = {
+      title: `❌ Order #${order.orderNumber} Cancelled`,
+      body: `Cancelled by ${cancelledByName}${reasonText}. Deducted items restored to inventory.`,
+      icon: '/r2cart-logo.png',
+      badge: '/r2cart-logo.png',
+      tag: `order-cancelled-${order.id}`,
+      url: `/admin/orders/${order.id}`,
+      data: {
+        url: `/admin/orders/${order.id}`,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        reason: reason,
+        type: 'ADMIN_ORDER_CANCELLED',
+      },
+    };
+
+    const results = await Promise.allSettled(
+      targets.map((sub) => sendNotificationToSubscription(sub, payload))
+    );
+    const sentCount = results.filter((r) => r.status === 'fulfilled' && r.value?.success).length;
+    console.log(`[Push Notification] Order #${order.orderNumber} cancellation dispatched to admins: ${sentCount}/${targets.length} delivered.`);
+  } catch (err) {
+    console.error('Error in notifyAdminsOrderCancelled:', err.message);
+  }
+}
+
 export async function notifyCustomerOrderPlaced(order) {
   try {
     if (!order.userId) return;

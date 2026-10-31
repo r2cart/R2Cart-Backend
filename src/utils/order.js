@@ -36,6 +36,46 @@ export function orderDto(o){
   const deliveredHistory = (o.history || []).find(h => h.status === 'DELIVERED');
   const deliveredAt = o.deliveredAt || deliveredAssignment?.deliveredAt || deliveredHistory?.createdAt || (o.status === 'DELIVERED' ? o.updatedAt : null);
 
+  // Find cancelled timestamp, reason and initiator
+  const cancelledHistory = (o.history || []).slice().reverse().find(h => h.status === 'CANCELLED');
+  let cancellationReason = null;
+  let cancelledBy = null;
+  let cancelledAt = null;
+
+  if (cancelledHistory || o.status === 'CANCELLED') {
+    cancelledAt = cancelledHistory?.createdAt || (o.status === 'CANCELLED' ? o.updatedAt : null);
+    const rawNote = cancelledHistory?.note ? cancelledHistory.note.trim() : '';
+
+    if (rawNote) {
+      if (rawNote.startsWith('Cancelled by customer:')) {
+        cancellationReason = rawNote.replace(/^Cancelled by customer:\s*/i, '').trim();
+        cancelledBy = snap.name || o.user?.name ? `Customer (${snap.name || o.user?.name})` : 'Customer';
+      } else if (rawNote.match(/^Cancelled by admin \((.*?)\):/i)) {
+        const match = rawNote.match(/^Cancelled by admin \((.*?)\):\s*(.*)$/i);
+        cancelledBy = match[1] ? `Admin (${match[1]})` : 'Admin';
+        cancellationReason = match[2] ? match[2].trim() : 'Cancelled by store admin';
+      } else if (rawNote.startsWith('Cancelled by admin:')) {
+        cancellationReason = rawNote.replace(/^Cancelled by admin:\s*/i, '').trim();
+        cancelledBy = 'Admin';
+      } else if (rawNote.startsWith('Cancelled by store admin:')) {
+        cancellationReason = rawNote.replace(/^Cancelled by store admin:\s*/i, '').trim();
+        cancelledBy = 'Admin';
+      } else if (rawNote.toLowerCase().includes('customer')) {
+        cancellationReason = rawNote;
+        cancelledBy = snap.name || o.user?.name ? `Customer (${snap.name || o.user?.name})` : 'Customer';
+      } else if (rawNote.toLowerCase().includes('admin')) {
+        cancellationReason = rawNote;
+        cancelledBy = 'Admin';
+      } else {
+        cancellationReason = rawNote;
+        cancelledBy = 'Customer';
+      }
+    } else if (o.status === 'CANCELLED') {
+      cancellationReason = 'Reason not specified';
+      cancelledBy = snap.name || o.user?.name ? `Customer (${snap.name || o.user?.name})` : 'Customer';
+    }
+  }
+
   const activeAssignment = assignments.find(a => a.isCurrent) || assignments[0] || null;
   const deliveryStaff = deliveredAssignment?.deliveryPerson || activeAssignment?.deliveryPerson || null;
   const proof = deliveredAssignment?.proofs?.[0] || o.deliveryProofs?.[0] || null;
@@ -43,6 +83,9 @@ export function orderDto(o){
   return {
     ...o,
     status: statusLabel[o.status] || o.status,
+    cancellationReason: cancellationReason || (o.status === 'CANCELLED' ? 'Reason not specified' : null),
+    cancelledBy: cancelledBy || (o.status === 'CANCELLED' ? 'Customer' : null),
+    cancelledAt: cancelledAt || (o.status === 'CANCELLED' ? o.updatedAt : null),
     deliveryType: o.deliveryType || 'INSTANT',
     deliveryDate: o.deliveryDate || null,
     deliverySlot: o.deliverySlot || null,
