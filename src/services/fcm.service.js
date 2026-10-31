@@ -108,6 +108,7 @@ export async function sendFcmToAdminsNewOrder(order) {
       where: {
         OR: [
           { role: 'ADMIN' },
+          { role: 'SUPER_ADMIN' },
           { user: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } } },
         ],
       },
@@ -123,9 +124,11 @@ export async function sendFcmToAdminsNewOrder(order) {
     // Filter tokens: Category-scoped admin only receives alert if this order includes their assigned category
     const orderCatIds = new Set((order.items || []).map(i => i.product?.categoryId).filter(Boolean));
     const eligibleTokens = adminTokens.filter(t => {
+      if (t.role === 'SUPER_ADMIN' || t.user?.role === 'SUPER_ADMIN' || t.user?.staffRole === 'SUPER_ADMIN') {
+        return true;
+      }
       const u = t.user;
-      if (!u) return true;
-      if (u.role === 'SUPER_ADMIN' || u.staffRole === 'SUPER_ADMIN') return true;
+      if (!u) return false;
       const assigned = Array.isArray(u.assignedCategoryIds) ? u.assignedCategoryIds : [];
       const isScoped = u.staffRole === 'CATEGORY_ADMIN' || assigned.length > 0;
       if (!isScoped) return true; // Global store manager
@@ -162,6 +165,7 @@ export async function sendFcmToAdminsNewEnquiry(enquiry, product) {
       where: {
         OR: [
           { role: 'ADMIN' },
+          { role: 'SUPER_ADMIN' },
           { user: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } } },
         ],
       },
@@ -176,13 +180,26 @@ export async function sendFcmToAdminsNewEnquiry(enquiry, product) {
 
     const prodCatId = product?.categoryId;
     const eligibleTokens = adminTokens.filter(t => {
+      // 1. Super Admin always gets all inquiries across every category
+      if (t.role === 'SUPER_ADMIN' || t.user?.role === 'SUPER_ADMIN' || t.user?.staffRole === 'SUPER_ADMIN') {
+        return true;
+      }
+
       const u = t.user;
-      if (!u) return true;
-      if (u.role === 'SUPER_ADMIN' || u.staffRole === 'SUPER_ADMIN') return true;
+      if (!u) {
+        return t.role === 'SUPER_ADMIN';
+      }
+
       const assigned = Array.isArray(u.assignedCategoryIds) ? u.assignedCategoryIds : [];
       const isScoped = u.staffRole === 'CATEGORY_ADMIN' || assigned.length > 0;
-      if (!isScoped) return true; // Global admin
-      return prodCatId && assigned.includes(prodCatId);
+
+      // 2. Locally created category admin ONLY gets notification if product belongs to their assigned category
+      if (isScoped) {
+        return Boolean(prodCatId && assigned.includes(prodCatId));
+      }
+
+      // Non-scoped global admin does not get isolated category inquiries
+      return false;
     });
 
     if (!eligibleTokens.length) return;
