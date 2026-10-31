@@ -496,7 +496,20 @@ const categoryData=body=>{
  if(!slug)throw new AppError('Please enter a valid category name',422);
  const status=String(body.status||'ACTIVE').toUpperCase();
  if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Invalid category status',422);
- return {name,slug,image:String(body.image||'').trim()||null,color:String(body.color||'').trim()||'#EAF8E8',position:Number(body.position||0),status,parentId:body.parentId||null};
+ return {
+   name,
+   slug,
+   image:String(body.image||'').trim()||null,
+   color:String(body.color||'').trim()||'#EAF8E8',
+   position:Number(body.position||0),
+   status,
+   parentId:body.parentId||null,
+   badgeActive: Boolean(body.badgeActive),
+   badgeText: body.badgeText ? String(body.badgeText).trim() : null,
+   noticeActive: Boolean(body.noticeActive),
+   noticeTitle: body.noticeTitle ? String(body.noticeTitle).trim() : null,
+   noticeMessage: body.noticeMessage ? String(body.noticeMessage).trim() : null
+ };
 };
 const categoryInclude={parent:{select:{id:true,name:true}},children:{select:{id:true,name:true,status:true},orderBy:{position:'asc'}},_count:{select:{products:{where:{deletedAt:null}}}}};
 export const categories={

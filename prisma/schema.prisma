@@ -159,6 +159,12 @@ model Category {
   children  Category[]   @relation("CategoryTree")
   products  Product[]
 
+  badgeActive   Boolean      @default(false)
+  badgeText     String?
+  noticeActive  Boolean      @default(false)
+  noticeTitle   String?
+  noticeMessage String?      @db.Text
+
   @@index([parentId])
   @@map("categories")
 }
