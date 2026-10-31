@@ -105,6 +105,7 @@ export async function ensureProductDeliveryScopeColumns() {
         ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "deliveryScope" VARCHAR(32) DEFAULT 'LOCAL';
         ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "deliveryLocations" JSONB;
         ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "shippingFee" DECIMAL(10,2) DEFAULT 0.00;
+        ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "orderMode" VARCHAR(32) DEFAULT 'DIRECT_ORDER';
       `).catch(() => {});
     } else {
       const existing = await prisma.$queryRawUnsafe(`
@@ -112,7 +113,7 @@ export async function ensureProductDeliveryScopeColumns() {
         FROM information_schema.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
           AND TABLE_NAME = 'products' 
-          AND COLUMN_NAME IN ('deliveryScope', 'deliveryLocations', 'shippingFee')
+          AND COLUMN_NAME IN ('deliveryScope', 'deliveryLocations', 'shippingFee', 'orderMode')
       `);
       const found = (existing || []).map(r => r.COLUMN_NAME);
       if (!found.includes('deliveryScope')) {
@@ -127,8 +128,12 @@ export async function ensureProductDeliveryScopeColumns() {
         console.log('[Schema] Adding missing column: products.shippingFee');
         await prisma.$executeRawUnsafe(`ALTER TABLE \`products\` ADD COLUMN \`shippingFee\` DECIMAL(10,2) NULL DEFAULT 0.00`);
       }
+      if (!found.includes('orderMode')) {
+        console.log('[Schema] Adding missing column: products.orderMode');
+        await prisma.$executeRawUnsafe(`ALTER TABLE \`products\` ADD COLUMN \`orderMode\` VARCHAR(32) NOT NULL DEFAULT 'DIRECT_ORDER'`);
+      }
     }
-    console.log('[Schema] Product delivery scope columns verified.');
+    console.log('[Schema] Product delivery scope and orderMode columns verified.');
   } catch (err) {
     console.warn('[Schema] Product delivery scope verify notice:', err.message);
   }

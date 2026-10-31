@@ -98,6 +98,12 @@ const productData=body=>{
    ? Math.max(0, Number(body.shippingFee) || 0)
    : 0;
 
+ const VALID_ORDER_MODES = ['DIRECT_ORDER', 'CONTACT_REQUEST', 'BOTH'];
+ let orderMode = String(body.orderMode || 'DIRECT_ORDER').trim().toUpperCase();
+ if (!VALID_ORDER_MODES.includes(orderMode)) {
+   orderMode = 'DIRECT_ORDER';
+ }
+
  return {
    name:String(body.name||'').trim(),
    description:String(body.description||'').trim(),
@@ -108,7 +114,8 @@ const productData=body=>{
    bestSeller:Boolean(body.bestSeller),
    deliveryScope,
    deliveryLocations,
-   shippingFee
+   shippingFee,
+   orderMode
  };
 };
 const productInclude={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
@@ -249,6 +256,7 @@ export const products={
               deliveryScope: data.deliveryScope,
               deliveryLocations: data.deliveryLocations,
               shippingFee: data.shippingFee,
+              orderMode: data.orderMode,
               ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold }),
               variantGroupId: effectiveGroupId,
               ...(imageUrls && { images: { deleteMany: {}, create: imageUrls.map((url, position) => ({ url, position })) } })

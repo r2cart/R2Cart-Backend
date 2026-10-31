@@ -14,6 +14,7 @@ catalogRouter.get('/homepage/top-picks', homepageRankingController.getTopPicks);
 catalogRouter.get('/categories', c.categories);
 catalogRouter.get('/products', optionalAuthenticate, c.products);
 catalogRouter.get('/products/:id', c.product);
+catalogRouter.post('/products/:id/enquire', optionalAuthenticate, c.submitProductEnquiry);
 catalogRouter.get('/search', optionalAuthenticate, c.searchProducts);
 catalogRouter.get('/search/suggestions', optionalAuthenticate, c.suggestions);
 catalogRouter.get('/banners', c.banners);

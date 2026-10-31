@@ -23,6 +23,7 @@ import { analytics } from '../controllers/admin-analytics.controller.js';
 import { purchases } from '../controllers/admin-purchases.controller.js';
 import { suppliers } from '../controllers/admin-suppliers.controller.js';
 import { expenses } from '../controllers/admin-expenses.controller.js';
+import { enquiries } from '../controllers/admin-enquiries.controller.js';
 import {
   authenticate,
   authorize,
@@ -263,6 +264,13 @@ adminRouter.get('/security/login-history', authorizeSuperAdmin, adminSecurity.se
 // ==========================================
 adminRouter.get('/support', authorizePermission('support.manage'), support.list);
 adminRouter.patch('/support/:id', authorizePermission('support.manage'), support.reply);
+
+// ==========================================
+// 11B. CUSTOMER PRODUCT ENQUIRIES & CONTACT REQUESTS
+// ==========================================
+adminRouter.get('/enquiries', authorizePermission('enquiries.view', 'products.view', 'orders.view'), enquiries.list);
+adminRouter.patch('/enquiries/:id', authorizePermission('enquiries.manage', 'products.edit', 'orders.update_status'), enquiries.updateStatus);
+adminRouter.delete('/enquiries/:id', authorizePermission('enquiries.manage', 'products.delete'), enquiries.delete);
 
 // ==========================================
 // 12. SUPER ADMIN: GLOBAL SETTINGS & EMERGENCY PAUSE

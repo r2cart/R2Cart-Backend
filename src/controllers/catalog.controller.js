@@ -293,3 +293,60 @@ export const contactInquiry=asyncHandler(async(req,res)=>{
  created(res,{ticketNumber:ticket.ticketNumber,emailNotificationSent},'Your message has been sent successfully. Our support team will get back to you shortly.');
 });
 
+export const submitProductEnquiry = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { name, phone, email, message } = req.body;
+
+  if (!name || !name.trim()) {
+    throw new AppError('Your name is required to submit a contact request', 422);
+  }
+
+  const cleanPhone = String(phone || '').replace(/\D/g, '');
+  if (!cleanPhone || cleanPhone.length < 10) {
+    throw new AppError('Please provide a valid 10-digit phone number so we can reach you', 422);
+  }
+
+  const product = await prisma.product.findFirst({
+    where: {
+      OR: [{ id }, { slug: id }],
+      status: 'ACTIVE'
+    },
+    include: {
+      category: true
+    }
+  });
+
+  if (!product) {
+    throw new AppError('Product not found or unavailable', 404);
+  }
+
+  const enquiry = await prisma.productEnquiry.create({
+    data: {
+      productId: product.id,
+      userId: req.user?.id || null,
+      name: name.trim(),
+      phone: cleanPhone,
+      email: email ? String(email).trim().toLowerCase() : null,
+      message: message ? String(message).trim() : null,
+      status: 'PENDING'
+    },
+    include: {
+      product: {
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          unit: true,
+          category: { select: { name: true } }
+        }
+      }
+    }
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Your inquiry has been submitted! Our specialist will contact you shortly.',
+    data: enquiry
+  });
+});
+
