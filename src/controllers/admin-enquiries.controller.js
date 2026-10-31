@@ -1,6 +1,5 @@
 import { prisma } from '../config/prisma.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { AppError } from '../utils/AppError.js';
+import { AppError, asyncHandler, ok } from '../utils/response.js';
 import { resolveUserCategoryScope } from '../utils/category-scope.js';
 
 export const enquiries = {
