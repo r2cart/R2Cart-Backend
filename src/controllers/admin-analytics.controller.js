@@ -16,6 +16,7 @@ import {
   consumeWastageFifoBatches
 } from '../services/fifo.service.js';
 import { logAudit } from '../services/audit.service.js';
+import { resolveUserCategoryScope, verifyProductCategoryAccess } from '../utils/category-scope.js';
 
 export const analytics = {
   /**
@@ -23,12 +24,14 @@ export const analytics = {
    */
   overview: asyncHandler(async (req, res) => {
     const { preset = 'thisMonth', startDate: qStart, endDate: qEnd } = req.query;
+    const scope = await resolveUserCategoryScope(req.user);
+    const allowedCategoryIds = scope.isScoped ? scope.categoryIds : null;
 
     const bounds = getReportingPeriodBounds(preset, qStart, qEnd);
     const [currentFinancials, previousFinancials, inventoryVal, cashFlow, insights] = await Promise.all([
-      calculatePeriodFinancials(bounds.startDate, bounds.endDate),
-      calculatePeriodFinancials(bounds.prevStartDate, bounds.prevEndDate),
-      getInventoryValuationReport(),
+      calculatePeriodFinancials(bounds.startDate, bounds.endDate, allowedCategoryIds),
+      calculatePeriodFinancials(bounds.prevStartDate, bounds.prevEndDate, allowedCategoryIds),
+      getInventoryValuationReport(allowedCategoryIds),
       getCashFlowReport(bounds.startDate, bounds.endDate),
       getSmartBusinessInsights(bounds.startDate, bounds.endDate)
     ]);
@@ -90,7 +93,9 @@ export const analytics = {
     const { preset = 'today', startDate: qStart, endDate: qEnd, date: qDate } = req.query;
     const start = qDate || qStart;
     const end = qDate || qEnd || start;
-    const report = await getSalesProfitDashboard(preset, start, end);
+    const scope = await resolveUserCategoryScope(req.user);
+    const allowedCategoryIds = scope.isScoped ? scope.categoryIds : null;
+    const report = await getSalesProfitDashboard(preset, start, end, allowedCategoryIds);
     ok(res, report, 'Sales & profit report fetched');
   }),
 
@@ -99,8 +104,10 @@ export const analytics = {
    */
   salesTrend: asyncHandler(async (req, res) => {
     const { preset = 'thisMonth', startDate: qStart, endDate: qEnd } = req.query;
+    const scope = await resolveUserCategoryScope(req.user);
+    const allowedCategoryIds = scope.isScoped ? scope.categoryIds : null;
     const bounds = getReportingPeriodBounds(preset, qStart, qEnd);
-    const series = await buildSalesTrendSeries(bounds.startDate, bounds.endDate);
+    const series = await buildSalesTrendSeries(bounds.startDate, bounds.endDate, allowedCategoryIds);
 
     ok(res, {
       period: bounds,
@@ -113,8 +120,10 @@ export const analytics = {
    */
   productPerformance: asyncHandler(async (req, res) => {
     const { preset = 'thisMonth', startDate: qStart, endDate: qEnd } = req.query;
+    const scope = await resolveUserCategoryScope(req.user);
+    const allowedCategoryIds = scope.isScoped ? scope.categoryIds : null;
     const bounds = getReportingPeriodBounds(preset, qStart, qEnd);
-    const products = await getProductPerformanceReport(bounds.startDate, bounds.endDate);
+    const products = await getProductPerformanceReport(bounds.startDate, bounds.endDate, allowedCategoryIds);
 
     ok(res, {
       period: bounds,
@@ -126,7 +135,9 @@ export const analytics = {
    * Batch-wise FIFO inventory valuation and reconciliation status.
    */
   inventoryValuation: asyncHandler(async (req, res) => {
-    const valuation = await getInventoryValuationReport();
+    const scope = await resolveUserCategoryScope(req.user);
+    const allowedCategoryIds = scope.isScoped ? scope.categoryIds : null;
+    const valuation = await getInventoryValuationReport(allowedCategoryIds);
     ok(res, valuation, 'Inventory valuation fetched');
   }),
 
@@ -174,6 +185,9 @@ export const analytics = {
     if (!productId || !quantity) {
       throw new AppError('Product ID and quantity are required', 422);
     }
+
+    const scope = await resolveUserCategoryScope(req.user);
+    await verifyProductCategoryAccess(productId, scope);
 
     const result = await prisma.$transaction(async tx => {
       return consumeWastageFifoBatches(tx, {
@@ -239,23 +253,29 @@ export const analytics = {
   exportCsv: asyncHandler(async (req, res) => {
     const { reportType } = req.params;
     const { preset = 'thisMonth', startDate: qStart, endDate: qEnd } = req.query;
+    const scope = await resolveUserCategoryScope(req.user);
+    const allowedCategoryIds = scope.isScoped ? scope.categoryIds : null;
     const bounds = getReportingPeriodBounds(preset, qStart, qEnd);
+
+    if (scope.isScoped && reportType === 'suppliers') {
+      throw new AppError('Access denied: Supplier exports are restricted to store managers and super admins', 403);
+    }
 
     let csvContent = '';
     const safeCsvCell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
     if (reportType === 'sales') {
-      const series = await buildSalesTrendSeries(bounds.startDate, bounds.endDate);
+      const series = await buildSalesTrendSeries(bounds.startDate, bounds.endDate, allowedCategoryIds);
       const headers = ['Date', 'Gross Sales (INR)', 'Net Sales (INR)', 'FIFO COGS (INR)', 'Gross Profit (INR)', 'Orders Count'];
       const rows = series.map(s => [s.date, s.grossSales, s.netSales, s.cogs, s.grossProfit, s.ordersCount]);
       csvContent = [headers.join(','), ...rows.map(r => r.map(safeCsvCell).join(','))].join('\n');
     } else if (reportType === 'products') {
-      const products = await getProductPerformanceReport(bounds.startDate, bounds.endDate);
+      const products = await getProductPerformanceReport(bounds.startDate, bounds.endDate, allowedCategoryIds);
       const headers = ['Product', 'SKU', 'Category', 'Units Sold', 'Gross Sales (INR)', 'FIFO COGS (INR)', 'Gross Profit (INR)', 'Margin %', 'Stock Remaining', 'Cost Verified'];
       const rows = products.map(p => [p.name, p.sku, p.category, p.unitsSold, p.grossSales, p.cogs, p.grossProfit, `${p.marginPercent}%`, p.currentStock, p.isCostComplete ? 'YES' : 'INCOMPLETE']);
       csvContent = [headers.join(','), ...rows.map(r => r.map(safeCsvCell).join(','))].join('\n');
     } else if (reportType === 'inventory') {
-      const valuation = await getInventoryValuationReport();
+      const valuation = await getInventoryValuationReport(allowedCategoryIds);
       const headers = ['Product', 'SKU', 'Category', 'Current Stock', 'Tracked Batch Units', 'Uncosted Legacy Units', 'FIFO Valuation (INR)', 'Status'];
       const rows = valuation.products.map(p => [p.name, p.sku, p.category, p.stock, p.batchUnits, p.uncostedUnits, p.valuation, p.isFullyReconciled ? 'RECONCILED' : 'NEEDS_COST']);
       csvContent = [headers.join(','), ...rows.map(r => r.map(safeCsvCell).join(','))].join('\n');
@@ -265,7 +285,7 @@ export const analytics = {
       const rows = payables.suppliers.map(s => [s.code, s.name, s.contactPerson || '—', s.phone || '—', s.totalPurchases, s.totalPayments, s.outstandingBalance, s.status]);
       csvContent = [headers.join(','), ...rows.map(r => r.map(safeCsvCell).join(','))].join('\n');
     } else if (reportType === 'pl') {
-      const fin = await calculatePeriodFinancials(bounds.startDate, bounds.endDate);
+      const fin = await calculatePeriodFinancials(bounds.startDate, bounds.endDate, allowedCategoryIds);
       const lines = [
         ['Metric', 'Amount (INR)'],
         ['Gross Product Sales', fin.grossProductSales],
@@ -283,6 +303,11 @@ export const analytics = {
     } else {
       throw new AppError('Invalid report type for export', 400);
     }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="r2cart_${reportType}_${bounds.preset}_${Date.now()}.csv"`);
+    res.status(200).send(csvContent);
+  })
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="r2cart_${reportType}_${bounds.preset}_${Date.now()}.csv"`);

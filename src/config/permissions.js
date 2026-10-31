@@ -229,8 +229,8 @@ export function hasPermission(user, requiredPermission) {
     return false;
   }
 
-  // Only Admin or Manager can hold staff permissions
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') {
+  // Only Admin, Category Admin, or Manager can hold staff permissions
+  if (user.role !== 'ADMIN' && user.role !== 'MANAGER' && user.staffRole !== 'CATEGORY_ADMIN') {
     return false;
   }
 

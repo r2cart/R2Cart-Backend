@@ -175,24 +175,39 @@ function safePercentageChange(current, previous) {
 
 /**
  * Computes core business analytics and P&L metrics for a given date range.
+ * Supports category scoping via allowedCategoryIds.
  */
-export async function calculatePeriodFinancials(startDate, endDate) {
+export async function calculatePeriodFinancials(startDate, endDate, allowedCategoryIds = null) {
+  const orderWhere = {
+    status: 'DELIVERED',
+    createdAt: { gte: startDate, lte: endDate }
+  };
+  if (allowedCategoryIds) {
+    orderWhere.items = {
+      some: { product: { categoryId: { in: allowedCategoryIds } } }
+    };
+  }
+
   // 1. Fetch eligible DELIVERED orders within the period
   const deliveredOrders = await prisma.order.findMany({
-    where: {
-      status: 'DELIVERED',
-      createdAt: { gte: startDate, lte: endDate }
-    },
+    where: orderWhere,
     include: {
-      items: true,
+      items: {
+        include: {
+          product: { select: { id: true, categoryId: true } }
+        }
+      },
       coupon: true,
       fifoAllocations: {
-        where: { status: 'COMMITTED' }
+        where: { status: 'COMMITTED' },
+        include: {
+          product: { select: { id: true, categoryId: true } }
+        }
       }
     }
   });
 
-  let completedOrderCount = deliveredOrders.length;
+  let completedOrderCount = 0;
   let grossProductSales = 0;
   let productDiscounts = 0;
   let couponDiscounts = 0;
@@ -206,19 +221,44 @@ export async function calculatePeriodFinancials(startDate, endDate) {
   let totalAllocatedUnits = 0;
 
   for (const order of deliveredOrders) {
-    productDiscounts += Number(order.productDiscount || 0);
-    couponDiscounts += Number(order.couponDiscount || 0);
-    deliveryFeesCollected += Number(order.deliveryFee || 0);
-    grandTotalSales += Number(order.grandTotal || 0);
+    const relevantItems = allowedCategoryIds
+      ? order.items.filter(item => {
+          const catId = item.product?.categoryId;
+          return catId && allowedCategoryIds.includes(catId);
+        })
+      : order.items;
 
-    for (const item of order.items) {
+    if (relevantItems.length === 0) continue;
+    completedOrderCount++;
+
+    if (!allowedCategoryIds) {
+      productDiscounts += Number(order.productDiscount || 0);
+      couponDiscounts += Number(order.couponDiscount || 0);
+      deliveryFeesCollected += Number(order.deliveryFee || 0);
+      grandTotalSales += Number(order.grandTotal || 0);
+    }
+
+    let orderCategorySales = 0;
+    for (const item of relevantItems) {
       const lineItemSales = Number(item.price) * item.quantity;
       grossProductSales += lineItemSales;
+      orderCategorySales += lineItemSales;
       totalUnitsSold += item.quantity;
     }
 
-    // Tally FIFO allocations for this delivered order
-    for (const alloc of order.fifoAllocations) {
+    if (allowedCategoryIds) {
+      grandTotalSales += orderCategorySales;
+    }
+
+    // Tally FIFO allocations for products in allowed categories
+    const relevantAllocations = allowedCategoryIds
+      ? order.fifoAllocations.filter(alloc => {
+          const catId = alloc.product?.categoryId;
+          return catId && allowedCategoryIds.includes(catId);
+        })
+      : order.fifoAllocations;
+
+    for (const alloc of relevantAllocations) {
       totalAllocatedUnits += alloc.quantity;
       if (alloc.isCostKnown && alloc.unitCost > 0) {
         verifiedCogs += Number(alloc.totalCost);
@@ -275,16 +315,29 @@ export async function calculatePeriodFinancials(startDate, endDate) {
 
 /**
  * Builds day-wise and monthly trend series for charts.
+ * Supports category scoping via allowedCategoryIds.
  */
-export async function buildSalesTrendSeries(startDate, endDate) {
+export async function buildSalesTrendSeries(startDate, endDate, allowedCategoryIds = null) {
+  const orderWhere = {
+    status: 'DELIVERED',
+    createdAt: { gte: startDate, lte: endDate }
+  };
+  if (allowedCategoryIds) {
+    orderWhere.items = {
+      some: { product: { categoryId: { in: allowedCategoryIds } } }
+    };
+  }
+
   const deliveredOrders = await prisma.order.findMany({
-    where: {
-      status: 'DELIVERED',
-      createdAt: { gte: startDate, lte: endDate }
-    },
+    where: orderWhere,
     include: {
-      items: true,
-      fifoAllocations: { where: { status: 'COMMITTED' } }
+      items: {
+        include: { product: { select: { id: true, categoryId: true } } }
+      },
+      fifoAllocations: {
+        where: { status: 'COMMITTED' },
+        include: { product: { select: { id: true, categoryId: true } } }
+      }
     },
     orderBy: { createdAt: 'asc' }
   });
@@ -293,6 +346,12 @@ export async function buildSalesTrendSeries(startDate, endDate) {
   const dayMap = new Map();
 
   for (const order of deliveredOrders) {
+    const relevantItems = allowedCategoryIds
+      ? order.items.filter(item => item.product?.categoryId && allowedCategoryIds.includes(item.product.categoryId))
+      : order.items;
+
+    if (relevantItems.length === 0) continue;
+
     const dayKey = order.createdAt.toISOString().slice(0, 10); // YYYY-MM-DD
     const dayLabel = new Date(`${dayKey}T12:00:00Z`).toLocaleDateString('en-IN', {
       day: 'numeric',
@@ -310,14 +369,18 @@ export async function buildSalesTrendSeries(startDate, endDate) {
     };
 
     let itemGross = 0;
-    for (const itm of order.items) {
+    for (const itm of relevantItems) {
       itemGross += Number(itm.price) * itm.quantity;
     }
-    const discount = Number(order.productDiscount || 0) + Number(order.couponDiscount || 0);
+    const discount = allowedCategoryIds ? 0 : (Number(order.productDiscount || 0) + Number(order.couponDiscount || 0));
     const net = Math.max(0, itemGross - discount);
 
     let orderCogs = 0;
-    for (const alloc of order.fifoAllocations) {
+    const relevantAllocations = allowedCategoryIds
+      ? order.fifoAllocations.filter(alloc => alloc.product?.categoryId && allowedCategoryIds.includes(alloc.product.categoryId))
+      : order.fifoAllocations;
+
+    for (const alloc of relevantAllocations) {
       if (alloc.isCostKnown) orderCogs += Number(alloc.totalCost);
     }
 
@@ -341,13 +404,21 @@ export async function buildSalesTrendSeries(startDate, endDate) {
 
 /**
  * Calculates product performance table with units, revenue, FIFO COGS, and margin.
+ * Supports category scoping via allowedCategoryIds.
  */
-export async function getProductPerformanceReport(startDate, endDate) {
+export async function getProductPerformanceReport(startDate, endDate, allowedCategoryIds = null) {
+  const orderWhere = {
+    status: 'DELIVERED',
+    createdAt: { gte: startDate, lte: endDate }
+  };
+  if (allowedCategoryIds) {
+    orderWhere.items = {
+      some: { product: { categoryId: { in: allowedCategoryIds } } }
+    };
+  }
+
   const deliveredOrders = await prisma.order.findMany({
-    where: {
-      status: 'DELIVERED',
-      createdAt: { gte: startDate, lte: endDate }
-    },
+    where: orderWhere,
     include: {
       items: {
         include: {
@@ -378,7 +449,14 @@ export async function getProductPerformanceReport(startDate, endDate) {
       orderAllocations.set(alloc.productId, cur);
     }
 
-    for (const item of order.items) {
+    const relevantItems = allowedCategoryIds
+      ? order.items.filter(item => {
+          const catId = item.product?.categoryId || item.product?.category?.id;
+          return catId && allowedCategoryIds.includes(catId);
+        })
+      : order.items;
+
+    for (const item of relevantItems) {
       const pid = item.productId;
       const current = productMap.get(pid) || {
         id: pid,
@@ -429,11 +507,19 @@ export async function getProductPerformanceReport(startDate, endDate) {
 
 /**
  * Calculates current and batch-wise FIFO inventory valuation.
+ * Supports category scoping via allowedCategoryIds.
  */
-export async function getInventoryValuationReport() {
+export async function getInventoryValuationReport(allowedCategoryIds = null) {
+  const productWhere = { deletedAt: null };
+  const batchWhere = { quantityRemaining: { gt: 0 } };
+  if (allowedCategoryIds) {
+    productWhere.categoryId = { in: allowedCategoryIds };
+    batchWhere.product = { categoryId: { in: allowedCategoryIds } };
+  }
+
   const [products, activeBatches] = await Promise.all([
     prisma.product.findMany({
-      where: { deletedAt: null },
+      where: productWhere,
       select: {
         id: true,
         name: true,
@@ -448,7 +534,7 @@ export async function getInventoryValuationReport() {
       orderBy: { name: 'asc' }
     }),
     prisma.fifoCostBatch.findMany({
-      where: { quantityRemaining: { gt: 0 } },
+      where: batchWhere,
       include: {
         supplier: { select: { id: true, name: true, code: true } },
         purchase: { select: { id: true, purchaseNumber: true, invoiceNumber: true } }
@@ -665,15 +751,23 @@ export async function getSmartBusinessInsights(startDate, endDate) {
  * Direct Retail Sales & Profit Report
  * Calculates delivered sales, purchase costs, net profit, margin %,
  * day-by-day sales trend, and product-wise profit breakdown.
+ * Supports category scoping via allowedCategoryIds.
  */
-export async function getSalesProfitDashboard(preset = 'today', customStart, customEnd) {
+export async function getSalesProfitDashboard(preset = 'today', customStart, customEnd, allowedCategoryIds = null) {
   const bounds = getReportingPeriodBounds(preset, customStart, customEnd);
   
+  const orderWhere = {
+    status: 'DELIVERED',
+    createdAt: { gte: bounds.startDate, lte: bounds.endDate }
+  };
+  if (allowedCategoryIds) {
+    orderWhere.items = {
+      some: { product: { categoryId: { in: allowedCategoryIds } } }
+    };
+  }
+
   const deliveredOrders = await prisma.order.findMany({
-    where: {
-      status: 'DELIVERED',
-      createdAt: { gte: bounds.startDate, lte: bounds.endDate }
-    },
+    where: orderWhere,
     include: {
       items: {
         include: {
@@ -685,6 +779,7 @@ export async function getSalesProfitDashboard(preset = 'today', customStart, cus
               price: true,
               unit: true,
               stock: true,
+              categoryId: true,
               images: { take: 1, orderBy: { position: 'asc' } },
               category: { select: { id: true, name: true, slug: true } }
             }
@@ -695,7 +790,7 @@ export async function getSalesProfitDashboard(preset = 'today', customStart, cus
     orderBy: { createdAt: 'asc' }
   });
 
-  let totalOrders = deliveredOrders.length;
+  let totalOrders = 0;
   let totalUnits = 0;
   let totalSales = 0;
   let totalCost = 0;
@@ -704,6 +799,16 @@ export async function getSalesProfitDashboard(preset = 'today', customStart, cus
   const productMap = new Map();
 
   for (const order of deliveredOrders) {
+    const relevantItems = allowedCategoryIds
+      ? order.items.filter(item => {
+          const catId = item.product?.categoryId || item.product?.category?.id;
+          return catId && allowedCategoryIds.includes(catId);
+        })
+      : order.items;
+
+    if (relevantItems.length === 0) continue;
+    totalOrders += 1;
+
     const dayKey = order.createdAt.toISOString().slice(0, 10);
     const dayLabel = new Date(`${dayKey}T12:00:00Z`).toLocaleDateString('en-IN', {
       day: 'numeric',
@@ -723,7 +828,7 @@ export async function getSalesProfitDashboard(preset = 'today', customStart, cus
     const dayStat = dayMap.get(dayKey);
     dayStat.orders += 1;
 
-    for (const item of order.items) {
+    for (const item of relevantItems) {
       const qty = item.quantity || 0;
       const sellingPrice = Number(item.price || 0);
       const itemCost = Number(item.costPrice || 0);

@@ -6,12 +6,13 @@ import {sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
 import {logAudit} from '../services/audit.service.js';
 import {reverseFifoAllocations} from '../services/fifo.service.js';
 import {invalidateAdminDashboard, invalidateProducts} from '../services/cache.service.js';
+import {resolveUserCategoryScope} from '../utils/category-scope.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
 const include={
   user:{select:{id:true,name:true,email:true,mobile:true}},
-  items:true,
+  items:{include:{product:{select:{id:true,categoryId:true}}}},
   history:{orderBy:{createdAt:'asc'}},
   payment:true,
   coupon:true,
@@ -30,7 +31,11 @@ const orderDetailsInclude={
 };
 export const orders={
  list:asyncHandler(async(req,res)=>{
+  const scope = await resolveUserCategoryScope(req.user);
   const where={};
+  if(scope.isScoped){
+    where.items = { some: { product: { categoryId: { in: scope.categoryIds } } } };
+  }
   if(req.query.status && req.query.status !== 'All') {
     where.status = normalizeOrderStatus(req.query.status);
   }
@@ -47,6 +52,9 @@ export const orders={
   }
   const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||20));
   const baseStatusWhere = where.status ? { status: where.status } : {};
+  if(scope.isScoped){
+    baseStatusWhere.items = where.items;
+  }
   const [rows,total,instantCount,scheduledCount,allCount]=await Promise.all([
     prisma.order.findMany({where,include,orderBy:[{createdAt:'desc'},{id:'asc'}],skip:(page-1)*limit,take:limit}),
     prisma.order.count({where}),
@@ -54,10 +62,42 @@ export const orders={
     prisma.order.count({where:{...baseStatusWhere, deliveryType:'SCHEDULED'}}),
     prisma.order.count({where:baseStatusWhere})
   ]);
-  ok(res,{orders:rows.map(orderDto),pagination:{page,limit,total,pages:Math.max(1,Math.ceil(total/limit))},counts:{all:allCount,instant:instantCount,scheduled:scheduledCount}});
+
+  const mappedOrders = rows.map(r => {
+    if (!scope.isScoped) return orderDto(r);
+    const categoryItems = (r.items || []).filter(item => item.product?.categoryId && scope.categoryIds.includes(item.product.categoryId));
+    return {
+      ...orderDto({ ...r, items: categoryItems }),
+      isMixedOrder: (r.items || []).some(item => !item.product?.categoryId || !scope.categoryIds.includes(item.product.categoryId)),
+      categoryItemsCount: categoryItems.length
+    };
+  });
+
+  ok(res,{orders:mappedOrders,pagination:{page,limit,total,pages:Math.max(1,Math.ceil(total/limit))},counts:{all:allCount,instant:instantCount,scheduled:scheduledCount}});
  }),
- get:asyncHandler(async(req,res)=>{const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}]},include:orderDetailsInclude});if(!row)throw new AppError('Order not found',404);ok(res,orderDto(row))}),
+ get:asyncHandler(async(req,res)=>{
+   const scope = await resolveUserCategoryScope(req.user);
+   const row=await prisma.order.findFirst({where:{OR:[{id:req.params.id},{orderNumber:req.params.id}]},include:orderDetailsInclude});
+   if(!row)throw new AppError('Order not found',404);
+   if(scope.isScoped){
+     const hasCategoryItem = (row.items || []).some(item => item.product?.categoryId && scope.categoryIds.includes(item.product.categoryId));
+     if(!hasCategoryItem){
+       throw new AppError('Order not found',404);
+     }
+     const categoryItems = (row.items || []).filter(item => item.product?.categoryId && scope.categoryIds.includes(item.product.categoryId));
+     return ok(res,{
+       ...orderDto({ ...row, items: categoryItems }),
+       isMixedOrder: (row.items || []).some(item => !item.product?.categoryId || !scope.categoryIds.includes(item.product.categoryId)),
+       categoryItemsCount: categoryItems.length
+     });
+   }
+   ok(res,orderDto(row));
+ }),
  status:asyncHandler(async(req,res)=>{
+  const scope = await resolveUserCategoryScope(req.user);
+  if(scope.isScoped){
+    throw new AppError('Category Admins cannot perform order-level status updates or cancellations. Safe read-only reporting is available.', 403);
+  }
   const status=normalizeOrderStatus(req.body.status);
   const reason=String(req.body.reason||req.body.note||'').trim();
   const row=await prisma.$transaction(async tx=>{
@@ -131,6 +171,10 @@ export const orders={
   sendFcmToCustomerStatusUpdate(row,status,reason||req.body.note).catch(e=>console.error('Customer FCM status push error:',e.message));
  }),
  modifyItem:asyncHandler(async(req,res)=>{
+  const scope = await resolveUserCategoryScope(req.user);
+  if(scope.isScoped){
+    throw new AppError('Category Admins cannot perform order item modifications. Safe read-only reporting is available.', 403);
+  }
   const {action='OUT_OF_STOCK',quantity,reason='Out of stock during store packing'}=req.body;
   const orderId=req.params.id;
   const itemId=req.params.itemId;

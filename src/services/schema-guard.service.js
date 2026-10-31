@@ -70,6 +70,33 @@ export async function generateNextDeliveryStaffId() {
   return `R2D-${maxNum + 1}`;
 }
 
+export async function ensureCategoryAdminColumns() {
+  try {
+    const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+    if (isPostgres) {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "assignedCategoryIds" JSONB;
+      `).catch(() => {});
+    } else {
+      const existing = await prisma.$queryRawUnsafe(`
+        SELECT COUNT(*) as cnt 
+        FROM information_schema.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'users' 
+          AND COLUMN_NAME = 'assignedCategoryIds'
+      `);
+      const count = Number(existing[0]?.cnt || 0);
+      if (count === 0) {
+        console.log('[Schema] Adding missing column: users.assignedCategoryIds');
+        await prisma.$executeRawUnsafe(`ALTER TABLE \`users\` ADD COLUMN \`assignedCategoryIds\` JSON NULL`);
+      }
+    }
+    console.log('[Schema] CategoryAdmin columns verified.');
+  } catch (err) {
+    console.warn('[Schema] CategoryAdmin column verify notice:', err.message);
+  }
+}
+
 export async function ensureDeliveryStaffColumns() {
   try {
     const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');

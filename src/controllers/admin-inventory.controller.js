@@ -3,6 +3,7 @@ import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
 import {logAudit} from '../services/audit.service.js';
 import {invalidateProducts} from '../services/cache.service.js';
+import {resolveUserCategoryScope,verifyProductCategoryAccess} from '../utils/category-scope.js';
 
 export const inventory = {
   overview: asyncHandler(async (req, res) => {
@@ -10,19 +11,36 @@ export const inventory = {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
 
+    const scope = await resolveUserCategoryScope(req.user);
+
     const now = new Date();
     const fourteenDaysLater = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
     // Build base where
     const where = { deletedAt: null };
+    const allProductsWhere = { deletedAt: null };
+
+    if (scope.isScoped) {
+      if (category) {
+        const cat = await prisma.category.findUnique({ where: { slug: category }, select: { id: true } });
+        if (!cat || !scope.categoryIds.includes(cat.id)) {
+          where.categoryId = { in: [] };
+        } else {
+          where.categoryId = cat.id;
+        }
+      } else {
+        where.categoryId = { in: scope.categoryIds };
+      }
+      allProductsWhere.categoryId = { in: scope.categoryIds };
+    } else if (category) {
+      where.category = { slug: category };
+    }
+
     if (search) {
       where.OR = [
         { name: { contains: String(search).trim() } },
         { sku: { contains: String(search).trim() } }
       ];
-    }
-    if (category) {
-      where.category = { slug: category };
     }
 
     // Status filter conditions
@@ -30,7 +48,6 @@ export const inventory = {
       where.stock = 0;
     } else if (status === 'LOW_STOCK') {
       where.stock = { gt: 0 };
-      // low stock condition will also be refined or handled in memory/query
     } else if (status === 'EXPIRED') {
       where.hasExpiry = true;
       where.expiryDate = { lte: now };
@@ -41,7 +58,7 @@ export const inventory = {
 
     const [allProducts, setting] = await Promise.all([
       prisma.product.findMany({
-        where: { deletedAt: null },
+        where: allProductsWhere,
         select: {
           id: true,
           stock: true,
@@ -138,6 +155,8 @@ export const inventory = {
     const { productId, newStock, quantityDiff, reason } = req.body;
     if (!productId) throw new AppError('Product ID is required', 422);
 
+    await verifyProductCategoryAccess(productId, req.user);
+
     const trimmedReason = String(reason || '').trim();
     if (!trimmedReason || trimmedReason.length < 3) {
       throw new AppError('A clear adjustment reason is mandatory (minimum 3 characters)', 422);
@@ -218,6 +237,8 @@ export const inventory = {
     const { productId, hasExpiry, expiryDate, batchNumber } = req.body;
     if (!productId) throw new AppError('Product ID is required', 422);
 
+    await verifyProductCategoryAccess(productId, req.user);
+
     const current = await prisma.product.findUnique({ where: { id: productId } });
     if (!current || current.deletedAt) throw new AppError('Product not found', 404);
 
@@ -259,8 +280,17 @@ export const inventory = {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
 
+    const scope = await resolveUserCategoryScope(req.user);
     const where = {};
-    if (productId) where.productId = productId;
+    if (scope.isScoped) {
+      where.product = { categoryId: { in: scope.categoryIds } };
+    }
+    if (productId) {
+      if (scope.isScoped) {
+        await verifyProductCategoryAccess(productId, req.user);
+      }
+      where.productId = productId;
+    }
     if (type) where.type = type;
 
     if (dateFrom || dateTo) {
@@ -312,8 +342,13 @@ export const inventory = {
   }),
 
   exportReport: asyncHandler(async (req, res) => {
+    const scope = await resolveUserCategoryScope(req.user);
+    const exportWhere = { deletedAt: null };
+    if (scope.isScoped) {
+      exportWhere.categoryId = { in: scope.categoryIds };
+    }
     const products = await prisma.product.findMany({
-      where: { deletedAt: null },
+      where: exportWhere,
       include: { category: { select: { name: true } } },
       orderBy: [{ categoryId: 'asc' }, { name: 'asc' }]
     });

@@ -12,6 +12,7 @@ import {couponData} from '../utils/coupon.js';
 import {uploadProductImage as uploadProductMedia,uploadMedia,relocateProductImage,isCloudinaryConfigured,productImagePublicId,deleteProductImage} from '../services/image.service.js';
 import {logAudit} from '../services/audit.service.js';
 import {invalidateProducts,invalidateCategories,invalidateBanners,invalidateSettings} from '../services/cache.service.js';
+import {resolveUserCategoryScope,verifyProductCategoryAccess} from '../utils/category-scope.js';
 
 const saveLocalFallback=(buffer,folder)=>{
  const dir=resolve(env.uploadDir,folder);
@@ -25,8 +26,12 @@ export const uploadProductImage=asyncHandler(async(req,res)=>{
  if(!req.file)throw new AppError('Choose an image to upload',422);
  const slug=String(req.body.category||'').trim();
  if(!slug)throw new AppError('Select a category before uploading the product image',422);
- const category=await prisma.category.findUnique({where:{slug},select:{slug:true}});
+ const category=await prisma.category.findUnique({where:{slug},select:{id:true,slug:true}});
  if(!category)throw new AppError('Product category not found',404);
+ const scope=await resolveUserCategoryScope(req.user);
+ if(scope.isScoped&&!scope.categoryIds.includes(category.id)){
+   throw new AppError('Access denied: You are not authorized to upload images for this category',403);
+ }
  if(isCloudinaryConfigured()){
   const result=await uploadProductMedia(req.file.buffer,category.slug);
   return created(res,result,'Product image uploaded to Cloudinary');
@@ -84,6 +89,10 @@ export const products={
   const data=productData(req.body);
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
+  const scope=await resolveUserCategoryScope(req.user);
+  if(scope.isScoped&&!scope.categoryIds.includes(cat.id)){
+    throw new AppError('Access denied: You are not authorized to create products in this category',403);
+  }
   if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
   const slug=await uniqueProductSlug(data.name);
   const sku=`R2C-${randomUUID().replaceAll('-','').toUpperCase()}`;
@@ -110,6 +119,7 @@ export const products={
   });
  }),
  update:asyncHandler(async(req,res)=>{
+  const {scope}=await verifyProductCategoryAccess(req.params.id,req.user);
   const existing=await prisma.product.findUnique({where:{id:req.params.id},include:{images:{orderBy:{position:'asc'}}}});
   if(!existing||existing.deletedAt)throw new AppError('Product not found',404);
   const {category}=req.body;
@@ -123,6 +133,9 @@ export const products={
   const data=productData(req.body);
   const cat=await prisma.category.findUnique({where:{slug:category}});
   if(!cat)throw new AppError('Category not found',404);
+  if(scope.isScoped&&!scope.categoryIds.includes(cat.id)){
+    throw new AppError('Access denied: You are not authorized to assign products to this category',403);
+  }
   if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
 
   if(existing.categoryId!==cat.id){
@@ -273,11 +286,34 @@ export const products={
   invalidateProducts();
   ok(res,productDto(updated),'Product and all pack sizes updated');
  }),
- status:asyncHandler(async(req,res)=>{const status=String(req.body.status||'').trim().toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);const product=await prisma.product.findUnique({where:{id:req.params.id},select:{id:true}});if(!product)throw new AppError('Product not found',404);const updatedProduct=await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude});invalidateProducts();ok(res,productDto(updatedProduct),status==='ACTIVE'?'Product activated':'Product deactivated')}),
- remove:asyncHandler(async(req,res)=>{await deleteProduct(req.params.id);invalidateProducts();ok(res,null,'Product deleted; unused Cloudinary images removed')}),
+ status:asyncHandler(async(req,res)=>{
+  const status=String(req.body.status||'').trim().toUpperCase();
+  if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);
+  await verifyProductCategoryAccess(req.params.id,req.user);
+  const updatedProduct=await prisma.product.update({where:{id:req.params.id},data:{status},include:productInclude});
+  invalidateProducts();
+  ok(res,productDto(updatedProduct),status==='ACTIVE'?'Product activated':'Product deactivated');
+ }),
+ remove:asyncHandler(async(req,res)=>{
+  await verifyProductCategoryAccess(req.params.id,req.user);
+  await deleteProduct(req.params.id);
+  invalidateProducts();
+  ok(res,null,'Product deleted; unused Cloudinary images removed');
+ }),
  removeAll:asyncHandler(async(req,res)=>{const result=await deleteAllProducts();invalidateProducts();ok(res,result,`All ${result.count} products deleted successfully`)}),
-  removeByCategory:asyncHandler(async(req,res)=>{const result=await deleteProductsByCategory(req.params.categoryId);invalidateProducts();ok(res,result,`All ${result.count} products in ${result.categoryName||'category'} deleted successfully`)}),
+ removeByCategory:asyncHandler(async(req,res)=>{
+  const targetCategory=await prisma.category.findFirst({where:{OR:[{id:req.params.categoryId},{slug:req.params.categoryId}]}});
+  if(!targetCategory)throw new AppError('Category not found',404);
+  const scope=await resolveUserCategoryScope(req.user);
+  if(scope.isScoped&&!scope.categoryIds.includes(targetCategory.id)){
+    throw new AppError('Access denied: You are not authorized to delete products in this category',403);
+  }
+  const result=await deleteProductsByCategory(targetCategory.id);
+  invalidateProducts();
+  ok(res,result,`All ${result.count} products in ${result.categoryName||'category'} deleted successfully`);
+ }),
  stock:asyncHandler(async(req,res)=>{
+  await verifyProductCategoryAccess(req.params.id,req.user);
   const current=await prisma.product.findUnique({where:{id:req.params.id}});if(!current||current.deletedAt)throw new AppError('Product not found',404);
   const stock=Number(req.body.stock),lowStockThreshold=req.body.lowStockThreshold===undefined?current.lowStockThreshold:Number(req.body.lowStockThreshold);
   if(req.body.stock===''||!Number.isInteger(stock)||stock<0||stock>2147483647||!Number.isInteger(lowStockThreshold)||lowStockThreshold<0||lowStockThreshold>2147483647)throw new AppError('Stock and threshold must be valid whole numbers',422);
@@ -288,6 +324,7 @@ export const products={
  }),
  comingSoon:asyncHandler(async(req,res)=>{
   const productId=req.params.id;
+  await verifyProductCategoryAccess(productId,req.user);
   const currentProduct=await prisma.product.findUnique({
     where:{id:productId},
     include:{category:true}
@@ -409,8 +446,20 @@ const categoryData=body=>{
 const categoryInclude={parent:{select:{id:true,name:true}},children:{select:{id:true,name:true,status:true},orderBy:{position:'asc'}},_count:{select:{products:{where:{deletedAt:null}}}}};
 export const categories={
  list:asyncHandler(async(req,res)=>ok(res,await prisma.category.findMany({include:categoryInclude,orderBy:[{position:'asc'},{name:'asc'}]}))),
- create:asyncHandler(async(req,res)=>{const createdCat=await prisma.category.create({data:categoryData(req.body),include:categoryInclude});invalidateCategories();created(res,createdCat,'Category created')}),
+ create:asyncHandler(async(req,res)=>{
+  const scope=await resolveUserCategoryScope(req.user);
+  if(scope.isScoped){
+    throw new AppError('Category Admins cannot create new categories. Contact Super Admin.',403);
+  }
+  const createdCat=await prisma.category.create({data:categoryData(req.body),include:categoryInclude});
+  invalidateCategories();
+  created(res,createdCat,'Category created');
+ }),
  update:asyncHandler(async(req,res)=>{
+  const scope=await resolveUserCategoryScope(req.user);
+  if(scope.isScoped&&!scope.categoryIds.includes(req.params.id)){
+    throw new AppError('Access denied: You are not authorized to modify this category',403);
+  }
   if(req.body.parentId===req.params.id)throw new AppError('A category cannot be its own parent',422);
   const existing=await prisma.category.findUnique({where:{id:req.params.id}});
   if(!existing)throw new AppError('Category not found',404);
@@ -426,6 +475,10 @@ export const categories={
   ok(res,updated,'Category updated');
  }),
  remove:asyncHandler(async(req,res)=>{
+  const scope=await resolveUserCategoryScope(req.user);
+  if(scope.isScoped){
+    throw new AppError('Category Admins cannot delete categories. Contact Super Admin.',403);
+  }
   const category=await prisma.category.findUnique({where:{id:req.params.id},include:{_count:{select:{products:{where:{deletedAt:null}},children:true}}}});
   if(!category)throw new AppError('Category not found',404);
   if(category._count.products||category._count.children)throw new AppError('Remove this category’s products and subcategories before deleting it.',409);

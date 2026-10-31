@@ -139,8 +139,11 @@ export async function previewProductImport(rows){
  return validateImport(rows,categories,existing);
 }
 
-export async function exportProductsData(categorySlug){
+export async function exportProductsData(categorySlug, allowedCategoryIds = null){
  const where={deletedAt:null};
+ if(allowedCategoryIds){
+  where.categoryId = { in: allowedCategoryIds };
+ }
  const cleanCat=String(categorySlug||'').trim();
  if(cleanCat&&cleanCat!=='all'){
   where.category={slug:cleanCat};

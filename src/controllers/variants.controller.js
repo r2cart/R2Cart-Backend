@@ -4,12 +4,17 @@ import {AppError,asyncHandler,created,ok} from '../utils/response.js';
 import {productDto} from '../utils/order.js';
 import {variantData} from '../utils/variants.js';
 import {invalidateProducts} from '../services/cache.service.js';
+import {resolveUserCategoryScope} from '../utils/category-scope.js';
 
 export const addVariant=asyncHandler(async(req,res)=>{
  const pack=variantData(req.body);
  const product=await prisma.$transaction(async tx=>{
   const base=await tx.product.findUnique({where:{id:req.params.id},include:{images:true}});
   if(!base||base.deletedAt)throw new AppError('Product not found',404);
+  const scope=await resolveUserCategoryScope(req.user,tx);
+  if(scope.isScoped&&!scope.categoryIds.includes(base.categoryId)){
+    throw new AppError('Access denied: You are not authorized to add variants to products in this category',403);
+  }
   const group=base.variantGroupId||base.id;
   if(await tx.product.findFirst({where:{deletedAt:null,unit:pack.unit,OR:[{id:base.id},{variantGroupId:group}]}}))throw new AppError('This pack size already exists for the product',409);
   await tx.product.update({where:{id:base.id},data:{variantGroupId:group}});
@@ -23,6 +28,10 @@ export const addVariant=asyncHandler(async(req,res)=>{
 export const listVariants=asyncHandler(async(req,res)=>{
  const base=await prisma.product.findUnique({where:{id:req.params.id}});
  if(!base||base.deletedAt)throw new AppError('Product not found',404);
+ const scope=await resolveUserCategoryScope(req.user);
+ if(scope.isScoped&&!scope.categoryIds.includes(base.categoryId)){
+   throw new AppError('Access denied: You are not authorized to view variants for this category',403);
+ }
  const rows=await prisma.product.findMany({where:{deletedAt:null,OR:[{id:base.id},{variantGroupId:base.variantGroupId||base.id}]},include:{category:true,images:true,ratings:true},orderBy:{price:'asc'}});
  ok(res,rows.map(productDto));
 });

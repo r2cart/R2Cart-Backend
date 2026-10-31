@@ -7,6 +7,7 @@ import {generateNextDeliveryStaffId} from '../services/schema-guard.service.js';
 export const VALID_ROLES = [
   'SUPER_ADMIN',
   'ADMIN',
+  'CATEGORY_ADMIN',
   'DELIVERY_PERSON',
   'INVENTORY_MANAGER',
   'ORDER_MANAGER',
@@ -24,6 +25,7 @@ const sanitizeStaffUser = (user) => {
     permissions: rest.permissions || {},
     dutyStatus: rest.dutyStatus || 'OFF_DUTY',
     assignedVillageIds: rest.assignedVillageIds || [],
+    assignedCategoryIds: rest.assignedCategoryIds || [],
     vehicleType: rest.vehicleType || null,
     vehicleNumber: rest.vehicleNumber || null
   };
@@ -80,8 +82,8 @@ export const security = {
       }
 
       const callerRole = req.user.staffRole || (req.user.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (req.user.role === 'ADMIN' ? 'ADMIN' : 'MANAGER'));
-      if (staffRole === 'ADMIN' && callerRole !== 'SUPER_ADMIN') {
-        throw new AppError('Only Super Admin can create new Administrator accounts.', 403);
+      if ((staffRole === 'ADMIN' || staffRole === 'CATEGORY_ADMIN') && callerRole !== 'SUPER_ADMIN') {
+        throw new AppError('Only Super Admin can create new Administrator or Category Admin accounts.', 403);
       }
 
       const existingEmail = await prisma.user.findUnique({ where: { email } });
@@ -97,13 +99,27 @@ export const security = {
         deliveryStaffId = await generateNextDeliveryStaffId();
       }
 
+      let assignedCategoryIds = Array.isArray(req.body.assignedCategoryIds) ? req.body.assignedCategoryIds : [];
+      if (assignedCategoryIds.length > 0) {
+        const existingCats = await prisma.category.findMany({
+          where: { id: { in: assignedCategoryIds } },
+          select: { id: true }
+        });
+        if (existingCats.length !== assignedCategoryIds.length) {
+          throw new AppError('One or more assigned category IDs are invalid', 422);
+        }
+      }
+      if (staffRole === 'CATEGORY_ADMIN' && assignedCategoryIds.length === 0) {
+        throw new AppError('At least one assigned category is required for Category Admin', 422);
+      }
+
       const passwordHash = await bcrypt.hash(password, 10);
       const permissions = req.body.permissions && typeof req.body.permissions === 'object' ? req.body.permissions : {};
       const assignedVillageIds = Array.isArray(req.body.assignedVillageIds) ? req.body.assignedVillageIds : [];
       const vehicleType = req.body.vehicleType ? String(req.body.vehicleType).trim() : null;
       const vehicleNumber = req.body.vehicleNumber ? String(req.body.vehicleNumber).trim() : null;
 
-      const userRole = staffRole === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (staffRole === 'DELIVERY_PERSON' ? 'DELIVERY_PERSON' : (staffRole === 'ADMIN' ? 'ADMIN' : 'MANAGER'));
+      const userRole = staffRole === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (staffRole === 'DELIVERY_PERSON' ? 'DELIVERY_PERSON' : ((staffRole === 'ADMIN' || staffRole === 'CATEGORY_ADMIN') ? 'ADMIN' : 'MANAGER'));
 
       const newStaff = await prisma.user.create({
         data: {
@@ -116,6 +132,7 @@ export const security = {
           deliveryStaffId,
           permissions,
           assignedVillageIds,
+          assignedCategoryIds,
           vehicleType,
           vehicleNumber,
           dutyStatus: staffRole === 'DELIVERY_PERSON' ? 'OFF_DUTY' : 'ON_DUTY',
@@ -155,9 +172,21 @@ export const security = {
         throw new AppError('Only Super Admin can modify the Super Admin account.', 403);
       }
 
-      // Admin modification protection: Only Super Admin can modify other Admin accounts
-      if (targetRole === 'ADMIN' && callerRole !== 'SUPER_ADMIN' && current.id !== req.user.id) {
-        throw new AppError('Only Super Admin can modify other Administrator accounts.', 403);
+      // Self-modification protection: Admins cannot escalate or modify their own role, permissions, or category assignments
+      if (current.id === req.user.id && callerRole !== 'SUPER_ADMIN') {
+        if (
+          req.body.staffRole !== undefined ||
+          req.body.role !== undefined ||
+          req.body.permissions !== undefined ||
+          req.body.assignedCategoryIds !== undefined
+        ) {
+          throw new AppError('Admins cannot modify their own role, permissions, or category assignments.', 403);
+        }
+      }
+
+      // Admin modification protection: Only Super Admin can modify other Admin or Category Admin accounts
+      if ((targetRole === 'ADMIN' || targetRole === 'CATEGORY_ADMIN') && callerRole !== 'SUPER_ADMIN' && current.id !== req.user.id) {
+        throw new AppError('Only Super Admin can modify other Administrator or Category Admin accounts.', 403);
       }
 
       const data = {};
@@ -198,11 +227,11 @@ export const security = {
         if ((current.role === 'SUPER_ADMIN' || current.staffRole === 'SUPER_ADMIN') && staffRole !== 'SUPER_ADMIN') {
           throw new AppError('The primary Super Admin account cannot be demoted.', 400);
         }
-        if (staffRole === 'ADMIN' && callerRole !== 'SUPER_ADMIN' && targetRole !== 'ADMIN') {
-          throw new AppError('Only Super Admin can promote a staff member to Administrator.', 403);
+        if ((staffRole === 'ADMIN' || staffRole === 'CATEGORY_ADMIN') && callerRole !== 'SUPER_ADMIN' && targetRole !== 'ADMIN' && targetRole !== 'CATEGORY_ADMIN') {
+          throw new AppError('Only Super Admin can promote a staff member to Administrator or Category Admin.', 403);
         }
         data.staffRole = staffRole;
-        data.role = staffRole === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (staffRole === 'DELIVERY_PERSON' ? 'DELIVERY_PERSON' : (staffRole === 'ADMIN' ? 'ADMIN' : 'MANAGER'));
+        data.role = staffRole === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : (staffRole === 'DELIVERY_PERSON' ? 'DELIVERY_PERSON' : ((staffRole === 'ADMIN' || staffRole === 'CATEGORY_ADMIN') ? 'ADMIN' : 'MANAGER'));
         
         // Auto-assign deliveryStaffId if promoting to DELIVERY_PERSON and none exists
         if (staffRole === 'DELIVERY_PERSON' && !current.deliveryStaffId) {
@@ -217,6 +246,23 @@ export const security = {
 
       if (req.body.permissions && typeof req.body.permissions === 'object') {
         data.permissions = req.body.permissions;
+      }
+      if (req.body.assignedCategoryIds !== undefined) {
+        let assignedCategoryIds = Array.isArray(req.body.assignedCategoryIds) ? req.body.assignedCategoryIds : [];
+        if (assignedCategoryIds.length > 0) {
+          const existingCats = await prisma.category.findMany({
+            where: { id: { in: assignedCategoryIds } },
+            select: { id: true }
+          });
+          if (existingCats.length !== assignedCategoryIds.length) {
+            throw new AppError('One or more assigned category IDs are invalid', 422);
+          }
+        }
+        const effectiveRole = data.staffRole || current.staffRole;
+        if (effectiveRole === 'CATEGORY_ADMIN' && assignedCategoryIds.length === 0) {
+          throw new AppError('At least one assigned category is required for Category Admin', 422);
+        }
+        data.assignedCategoryIds = assignedCategoryIds;
       }
       if (req.body.assignedVillageIds !== undefined) {
         data.assignedVillageIds = Array.isArray(req.body.assignedVillageIds) ? req.body.assignedVillageIds : [];
@@ -259,6 +305,20 @@ export const security = {
       }
 
       // Log specific audit actions
+      if (data.assignedCategoryIds !== undefined) {
+        logAudit(req, {
+          module: 'SECURITY',
+          action: 'STAFF_CATEGORY_ASSIGNMENT_UPDATE',
+          resourceId: updated.id,
+          resourceName: updated.name,
+          details: {
+            email: updated.email,
+            previousAssignedCategoryIds: current.assignedCategoryIds,
+            newAssignedCategoryIds: data.assignedCategoryIds
+          }
+        });
+      }
+
       if (data.permissions !== undefined) {
         logAudit(req, {
           module: 'SECURITY',

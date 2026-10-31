@@ -94,6 +94,7 @@ model User {
   isStaffActive Boolean         @default(true)
   dutyStatus    String?         @default("OFF_DUTY")
   assignedVillageIds Json?
+  assignedCategoryIds Json?
   vehicleType   String?
   vehicleNumber String?
   deliveryStaffId String?       @unique
