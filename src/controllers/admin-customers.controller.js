@@ -1,8 +1,30 @@
 import { prisma } from '../config/prisma.js';
 import { AppError, asyncHandler, ok } from '../utils/response.js';
+import { resolveUserCategoryScope } from '../utils/category-scope.js';
 
 export const customers = asyncHandler(async (req, res) => {
+  const scope = await resolveUserCategoryScope(req.user);
+
   const where = { role: 'CUSTOMER' };
+
+  // Category-scoped: only show customers who have placed at least one order
+  // containing a product from the admin's assigned category/categories.
+  if (scope.isScoped) {
+    if (scope.categoryIds.length === 0) {
+      // No categories assigned → return empty list (safe default)
+      return ok(res, []);
+    }
+    where.orders = {
+      some: {
+        items: {
+          some: {
+            product: { categoryId: { in: scope.categoryIds } }
+          }
+        }
+      }
+    };
+  }
+
   if (req.query.q) {
     where.OR = [
       { name: { contains: String(req.query.q) } },
@@ -16,6 +38,7 @@ export const customers = asyncHandler(async (req, res) => {
     }
     where.status = req.query.status;
   }
+
   const rows = await prisma.user.findMany({
     where,
     select: {
@@ -27,12 +50,26 @@ export const customers = asyncHandler(async (req, res) => {
       createdAt: true,
       addresses: true,
       orders: {
+        // For scoped users: only include orders that contain category items
+        ...(scope.isScoped && {
+          where: {
+            items: {
+              some: {
+                product: { categoryId: { in: scope.categoryIds } }
+              }
+            }
+          }
+        }),
         select: {
           id: true,
           orderNumber: true,
           grandTotal: true,
           status: true,
-          createdAt: true
+          createdAt: true,
+          items: scope.isScoped ? {
+            where: { product: { categoryId: { in: scope.categoryIds } } },
+            select: { id: true, price: true, quantity: true }
+          } : false
         }
       }
     },
@@ -41,17 +78,35 @@ export const customers = asyncHandler(async (req, res) => {
 
   ok(
     res,
-    rows.map(user => ({
-      ...user,
-      totalOrders: user.orders.length,
-      totalSpent: user.orders
+    rows.map(user => {
+      const relevantOrders = user.orders;
+      const totalSpent = relevantOrders
         .filter(order => order.status === 'DELIVERED')
-        .reduce((sum, order) => sum + Number(order.grandTotal), 0)
-    }))
+        .reduce((sum, order) => {
+          // For scoped: sum only category item amounts instead of order grandTotal
+          if (scope.isScoped && Array.isArray(order.items)) {
+            return sum + order.items.reduce((s, item) => s + Number(item.price) * item.quantity, 0);
+          }
+          return sum + Number(order.grandTotal);
+        }, 0);
+
+      return {
+        ...user,
+        orders: relevantOrders.map(o => ({ ...o, items: undefined })), // strip items from response
+        totalOrders: relevantOrders.length,
+        totalSpent
+      };
+    })
   );
 });
 
 export const setCustomerStatus = asyncHandler(async (req, res) => {
+  // Category Admins cannot change customer account status
+  const scope = await resolveUserCategoryScope(req.user);
+  if (scope.isScoped) {
+    throw new AppError('Access denied: Only store-level admins can modify customer account status', 403);
+  }
+
   const status = String(req.body.status || '').toUpperCase();
   if (!['ACTIVE', 'INACTIVE'].includes(status)) {
     throw new AppError('Invalid customer status', 422);
@@ -71,6 +126,12 @@ export const setCustomerStatus = asyncHandler(async (req, res) => {
 });
 
 export const deleteCustomer = asyncHandler(async (req, res) => {
+  // Category Admins cannot delete customers
+  const scope = await resolveUserCategoryScope(req.user);
+  if (scope.isScoped) {
+    throw new AppError('Access denied: Only store-level admins can delete customer accounts', 403);
+  }
+
   const currentRole = req.user?.role;
   const currentStaffRole = req.user?.staffRole;
   const isSuperAdmin = currentRole === 'SUPER_ADMIN' || currentStaffRole === 'SUPER_ADMIN';
@@ -91,14 +152,12 @@ export const deleteCustomer = asyncHandler(async (req, res) => {
   }
 
   await prisma.$transaction(async tx => {
-    // 1. Find all orders placed by this customer
     const customerOrders = await tx.order.findMany({
       where: { userId: id },
       select: { id: true }
     });
     const orderIds = customerOrders.map(o => o.id);
 
-    // 2. Parallel cascade delete all dependencies linked to customer's orders
     if (orderIds.length > 0) {
       await Promise.all([
         tx.couponUsage.deleteMany({ where: { orderId: { in: orderIds } } }),
@@ -114,7 +173,6 @@ export const deleteCustomer = asyncHandler(async (req, res) => {
       await tx.order.deleteMany({ where: { id: { in: orderIds } } });
     }
 
-    // 3. Parallel delete all direct customer dependencies
     await Promise.all([
       tx.ticketMessage.deleteMany({ where: { ticket: { userId: id } } }),
       tx.supportTicket.deleteMany({ where: { userId: id } }),
@@ -131,7 +189,6 @@ export const deleteCustomer = asyncHandler(async (req, res) => {
       tx.deliveryChatMessage.deleteMany({ where: { senderId: id } })
     ]);
 
-    // 4. Finally delete customer record from users table
     await tx.user.delete({ where: { id } });
   }, {
     maxWait: 15000,

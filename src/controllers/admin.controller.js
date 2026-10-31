@@ -445,7 +445,11 @@ const categoryData=body=>{
 };
 const categoryInclude={parent:{select:{id:true,name:true}},children:{select:{id:true,name:true,status:true},orderBy:{position:'asc'}},_count:{select:{products:{where:{deletedAt:null}}}}};
 export const categories={
- list:asyncHandler(async(req,res)=>ok(res,await prisma.category.findMany({include:categoryInclude,orderBy:[{position:'asc'},{name:'asc'}]}))),
+ list:asyncHandler(async(req,res)=>{
+  const scope=await resolveUserCategoryScope(req.user);
+  const where=scope.isScoped?{id:{in:scope.categoryIds}}:{};
+  ok(res,await prisma.category.findMany({where,include:categoryInclude,orderBy:[{position:'asc'},{name:'asc'}]}));
+ }),
  create:asyncHandler(async(req,res)=>{
   const scope=await resolveUserCategoryScope(req.user);
   if(scope.isScoped){
