@@ -77,10 +77,8 @@ const productData=(body, user)=>{
  const threshold=body.lowStockThreshold===undefined?undefined:Number(body.lowStockThreshold);
  if(threshold!==undefined&&(!Number.isInteger(threshold)||threshold<0||threshold>2147483647))throw new AppError('Enter a valid whole-number stock alert threshold',422);
 
- // Delivery scope and order mode customization is reserved exclusively for locally created / category-scoped admins
- const isScoped = user?.staffRole === 'CATEGORY_ADMIN' || (Array.isArray(user?.assignedCategoryIds) && user.assignedCategoryIds.length > 0);
- const isSuper = user?.role === 'SUPER_ADMIN' || user?.staffRole === 'SUPER_ADMIN';
- const allowsSpecialtyScoping = isScoped || isSuper;
+ // Delivery scope and order mode customization is supported for all administrators (Super Admin, Local Store Admin, Category Admin)
+ const allowsSpecialtyScoping = true;
 
  let deliveryScope = 'LOCAL';
  let deliveryLocations = null;
