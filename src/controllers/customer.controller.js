@@ -356,6 +356,15 @@ export const checkout=asyncHandler(async(req,res)=>{
   const cartItems = userCartData?.items || [];
   if (!cartItems.length) throw new AppError('Your basket is empty', 400);
 
+  // Validate minimum order quantity for each item
+  for (const itm of cartItems) {
+    const minQty = Math.max(1, parseInt(itm.product?.minOrderQty, 10) || 1);
+    if (minQty > 1 && itm.quantity < minQty) {
+      const needed = minQty - itm.quantity;
+      throw new AppError(`"${itm.product?.name}" requires a minimum of ${minQty} units to place order. Please add ${needed} more unit${needed > 1 ? 's' : ''}.`, 422);
+    }
+  }
+
   // Categorize items by delivery scope
   const localItems = [];
   const panIndiaItems = [];
