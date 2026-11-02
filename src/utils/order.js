@@ -18,6 +18,7 @@ export function productDto(p){
     deliveryScope:p.deliveryScope||'LOCAL',
     deliveryLocations:p.deliveryLocations||null,
     shippingFee:moneyNumber(p.shippingFee||0),
+    minOrderQty: Math.max(1, parseInt(p.minOrderQty, 10) || 1),
     image:optimizeCloudinaryUrl(rawImage, { width: 800 }),
     images:p.images?.map(x=>optimizeCloudinaryUrl(x.url, { width: 800 }))||[],
     category:p.category?.slug||p.categoryId,

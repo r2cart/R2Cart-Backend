@@ -124,7 +124,10 @@ const productData=(body, user)=>{
    deliveryScope,
    deliveryLocations,
    shippingFee,
-   orderMode
+   orderMode,
+   minOrderQty: (body.minOrderQty !== undefined && body.minOrderQty !== null && body.minOrderQty !== '')
+     ? Math.max(1, parseInt(body.minOrderQty, 10) || 1)
+     : 1
  };
 };
 const productInclude={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
@@ -144,7 +147,7 @@ export const products={
   if(scope.isScoped&&!scope.categoryIds.includes(cat.id)){
     throw new AppError('Access denied: You are not authorized to create products in this category',403);
   }
-  if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
+  if(!data.name||!data.unit)throw new AppError('Product Name and Unit are required',422);
   const slug=await uniqueProductSlug(data.name);
   const sku=`R2C-${randomUUID().replaceAll('-','').toUpperCase()}`;
   if(req.body.packs!==undefined&&!Array.isArray(req.body.packs))throw new AppError('Pack sizes must be a list',422);
@@ -187,7 +190,7 @@ export const products={
   if(scope.isScoped&&!scope.categoryIds.includes(cat.id)){
     throw new AppError('Access denied: You are not authorized to assign products to this category',403);
   }
-  if(!data.name||!data.description||!data.unit)throw new AppError('Complete all required product fields',422);
+  if(!data.name||!data.unit)throw new AppError('Product Name and Unit are required',422);
 
   if(existing.categoryId!==cat.id){
     if(imageUrls&&imageUrls.length>0){

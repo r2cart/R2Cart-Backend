@@ -24,7 +24,7 @@ import { purchases } from '../controllers/admin-purchases.controller.js';
 import { suppliers } from '../controllers/admin-suppliers.controller.js';
 import { expenses } from '../controllers/admin-expenses.controller.js';
 import { enquiries } from '../controllers/admin-enquiries.controller.js';
-import { correctEnglishText } from '../controllers/admin-ai.controller.js';
+import { correctEnglishText, generateProductDetails } from '../controllers/admin-ai.controller.js';
 import {
   authenticate,
   authorize,
@@ -54,6 +54,7 @@ adminRouter.patch('/profile/password', profile.password);
 adminRouter.get('/search', navbar.search);
 adminRouter.get('/notifications', navbar.notifications);
 adminRouter.post('/ai/correct-text', correctEnglishText);
+adminRouter.post('/ai/generate-product-details', authorizePermission('products.create', 'products.edit'), generateProductDetails);
 
 // Dashboard / Reporting
 adminRouter.get(

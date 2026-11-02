@@ -196,6 +196,7 @@ model Product {
   deliveryLocations Json?
   shippingFee       Decimal?       @default(0) @db.Decimal(10, 2)
   orderMode         String         @default("DIRECT_ORDER") // "DIRECT_ORDER" | "CONTACT_REQUEST" | "BOTH"
+  minOrderQty       Int            @default(1)
   ratings           ProductRating[]
   enquiries         ProductEnquiry[]
   category          Category       @relation(fields: [categoryId], references: [id])
