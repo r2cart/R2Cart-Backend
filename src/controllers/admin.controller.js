@@ -601,7 +601,9 @@ const deliveryData=body=>{
  const number=(key,label,{nullable=false}={})=>{if(nullable&&(body[key]===''||body[key]==null))return null;const value=Number(body[key]);if(!Number.isFinite(value)||value<0)throw new AppError(`${label} must be zero or more`,422);return value};
  const status=String(body.status||'ACTIVE').toUpperCase();if(!['ACTIVE','INACTIVE'].includes(status))throw new AppError('Status must be ACTIVE or INACTIVE',422);
  const estimatedMinutes=number('estimatedMinutes','Estimated delivery time');if(!Number.isInteger(estimatedMinutes)||estimatedMinutes<1)throw new AppError('Estimated delivery time must be at least 1 minute',422);
- return {name,pincodes:localities,radiusKm:number('radiusKm','Delivery radius',{nullable:true}),minimumOrder:number('minimumOrder','Minimum order'),deliveryFee:number('deliveryFee','Delivery fee'),freeDeliveryThreshold:number('freeDeliveryThreshold','Free delivery threshold'),estimatedMinutes,status};
+ const openingTime=body.openingTime&&String(body.openingTime).trim()?String(body.openingTime).trim():null;
+ const closingTime=body.closingTime&&String(body.closingTime).trim()?String(body.closingTime).trim():null;
+ return {name,pincodes:localities,radiusKm:number('radiusKm','Delivery radius',{nullable:true}),minimumOrder:number('minimumOrder','Minimum order'),deliveryFee:number('deliveryFee','Delivery fee'),freeDeliveryThreshold:number('freeDeliveryThreshold','Free delivery threshold'),estimatedMinutes,openingTime,closingTime,status};
 };
 const deliveryView=area=>({...area,localities:Array.isArray(area.pincodes)?area.pincodes:[]});
 export const delivery={

@@ -127,16 +127,37 @@ export const delivery=asyncHandler(async(req,res)=>{
     const affectedSet = new Set(affectedList);
 
     const activeVillages=villages.map(v=>{
+      const parentArea = v.areaId ? areas.find(a => a.id === v.areaId) : null;
+
+      // 3-Tier Priority Operating Hours Resolution (Village -> Area -> Global)
+      let openingTime = null;
+      let closingTime = null;
+      let hoursSource = 'GLOBAL_DEFAULT';
+
+      if (v.openingTime && v.closingTime && String(v.openingTime).trim() && String(v.closingTime).trim()) {
+        openingTime = String(v.openingTime).trim();
+        closingTime = String(v.closingTime).trim();
+        hoursSource = 'VILLAGE_OVERRIDE';
+      } else if (parentArea && parentArea.openingTime && parentArea.closingTime && String(parentArea.openingTime).trim() && String(parentArea.closingTime).trim()) {
+        openingTime = String(parentArea.openingTime).trim();
+        closingTime = String(parentArea.closingTime).trim();
+        hoursSource = 'AREA_OVERRIDE';
+      } else {
+        openingTime = settings?.openingTime || '07:00';
+        closingTime = settings?.closingTime || '22:00';
+        hoursSource = 'GLOBAL_DEFAULT';
+      }
+
       const fee = v.deliveryFee !== null && v.deliveryFee !== undefined && v.deliveryFee !== ''
         ? Number(v.deliveryFee)
-        : Number(settings?.deliveryFee || 20);
+        : (parentArea?.deliveryFee !== null && parentArea?.deliveryFee !== undefined ? Number(parentArea.deliveryFee) : Number(settings?.deliveryFee || 20));
       const minOrder = v.minimumOrder !== null && v.minimumOrder !== undefined && v.minimumOrder !== ''
         ? Number(v.minimumOrder)
-        : Number(settings?.minimumOrder || 199);
+        : (parentArea?.minimumOrder !== null && parentArea?.minimumOrder !== undefined ? Number(parentArea.minimumOrder) : Number(settings?.minimumOrder || 199));
       const freeThresh = v.freeDeliveryThreshold !== null && v.freeDeliveryThreshold !== undefined && v.freeDeliveryThreshold !== ''
         ? Number(v.freeDeliveryThreshold)
-        : Number(settings?.freeDeliveryThreshold || 499);
-      const estMins = v.estimatedMinutes ? Number(v.estimatedMinutes) : 30;
+        : (parentArea?.freeDeliveryThreshold !== null && parentArea?.freeDeliveryThreshold !== undefined ? Number(parentArea.freeDeliveryThreshold) : Number(settings?.freeDeliveryThreshold || 499));
+      const estMins = v.estimatedMinutes ? Number(v.estimatedMinutes) : (parentArea?.estimatedMinutes ? Number(parentArea.estimatedMinutes) : 30);
 
       const isVillageSuspended = Boolean(
         v.isPaused ||
@@ -159,6 +180,9 @@ export const delivery=asyncHandler(async(req,res)=>{
         freeDeliveryThreshold:freeThresh,
         radiusKm:Number(v.radiusKm||settings?.globalDeliveryRadius||5),
         estimatedMinutes:estMins,
+        openingTime,
+        closingTime,
+        hoursSource,
         schedule:v.schedule,
         allowCod:v.allowCod ?? true,
         allowScheduled:v.allowScheduled ?? true,
@@ -183,6 +207,10 @@ export const delivery=asyncHandler(async(req,res)=>{
         ))
       );
 
+      const areaOpen = a.openingTime && String(a.openingTime).trim() ? String(a.openingTime).trim() : (settings?.openingTime || '07:00');
+      const areaClose = a.closingTime && String(a.closingTime).trim() ? String(a.closingTime).trim() : (settings?.closingTime || '22:00');
+      const areaHoursSource = a.openingTime && a.closingTime ? 'AREA_OVERRIDE' : 'GLOBAL_DEFAULT';
+
       return {
         id:a.id,
         name:a.name,
@@ -191,6 +219,9 @@ export const delivery=asyncHandler(async(req,res)=>{
         minimumOrder:Number(a.minimumOrder),
         freeDeliveryThreshold:Number(a.freeDeliveryThreshold),
         estimatedMinutes:a.estimatedMinutes,
+        openingTime:areaOpen,
+        closingTime:areaClose,
+        hoursSource:areaHoursSource,
         radiusKm:Number(a.radiusKm||settings?.globalDeliveryRadius||5),
         isVillage:false,
         isPaused:isAreaSuspended,

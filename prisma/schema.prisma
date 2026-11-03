@@ -444,6 +444,8 @@ model DeliveryArea {
   deliveryFee           Decimal           @db.Decimal(10, 2)
   freeDeliveryThreshold Decimal           @db.Decimal(10, 2)
   estimatedMinutes      Int
+  openingTime           String?
+  closingTime           String?
   isPaused              Boolean           @default(false)
   schedule              Json?
   status                EntityStatus      @default(ACTIVE)
@@ -609,6 +611,8 @@ model DeliveryVillage {
   allowCod              Boolean       @default(true)
   allowScheduled        Boolean       @default(true)
   estimatedMinutes      Int           @default(30)
+  openingTime           String?
+  closingTime           String?
   maxCapacity           Int?
   emergencyRestrictions Json?
   seasonalRules         Json?

@@ -110,6 +110,21 @@ export async function resolveVillageDeliveryRules({
     const areaHasMin = matchedArea.minimumOrder !== null && matchedArea.minimumOrder !== undefined;
     const areaHasFree = matchedArea.freeDeliveryThreshold !== null && matchedArea.freeDeliveryThreshold !== undefined;
 
+    const areaHasHours = Boolean(matchedArea.openingTime && matchedArea.closingTime);
+    const areaOpenStr = areaHasHours ? String(matchedArea.openingTime).trim() : (globalDefaults.openingTime || '07:00');
+    const areaCloseStr = areaHasHours ? String(matchedArea.closingTime).trim() : (globalDefaults.closingTime || '22:00');
+    const areaHoursSource = areaHasHours ? 'AREA_OVERRIDE' : 'GLOBAL_DEFAULT';
+
+    const areaStoreSchedule = await resolveEffectiveStoreSchedule({
+      targetDateStr,
+      targetTimeStr,
+      prismaClient,
+      customOpeningTime: areaOpenStr,
+      customClosingTime: areaCloseStr,
+      customRuleSource: areaHoursSource,
+      customRuleDetails: `${areaHoursSource === 'AREA_OVERRIDE' ? 'Delivery Area' : 'Store Default'} operating hours (${areaOpenStr} – ${areaCloseStr})`
+    });
+
     return {
       isServiceable: !isPaused,
       isPaused,
@@ -125,6 +140,9 @@ export async function resolveVillageDeliveryRules({
       freeDeliveryThreshold: Number(matchedArea.freeDeliveryThreshold ?? globalDefaults.freeDeliveryThreshold),
       estimatedDelivery: matchedArea.estimatedMinutes ? `${matchedArea.estimatedMinutes} minutes` : globalDefaults.estimatedDelivery,
       estimatedMinutes: matchedArea.estimatedMinutes || 30,
+      openingTime: areaOpenStr,
+      closingTime: areaCloseStr,
+      hoursSource: areaHoursSource,
       radiusKm: Number(matchedArea.radiusKm || globalDefaults.radiusKm),
       allowCod: globalDefaults.allowCod,
       allowScheduled: globalDefaults.allowScheduled,
@@ -132,10 +150,13 @@ export async function resolveVillageDeliveryRules({
         deliveryFee: areaHasFee ? 'AREA_OVERRIDE' : 'GLOBAL_DEFAULT',
         minimumOrder: areaHasMin ? 'AREA_OVERRIDE' : 'GLOBAL_DEFAULT',
         freeDeliveryThreshold: areaHasFree ? 'AREA_OVERRIDE' : 'GLOBAL_DEFAULT',
+        operatingHours: areaHoursSource,
         allowCod: 'GLOBAL_DEFAULT',
         allowScheduled: 'GLOBAL_DEFAULT'
       },
-      storeSchedule
+      storeSchedule: areaStoreSchedule,
+      isOpenNow: areaStoreSchedule.isOpenNow,
+      storeStatus: areaStoreSchedule.storeStatus
     };
   }
 
@@ -265,31 +286,69 @@ export async function resolveVillageDeliveryRules({
     }
   }
 
-  const effectiveEstimatedDelivery = `${effectiveEstMinutes} minutes`;
+    // 3-Tier Priority Operating Hours Resolution
+    // Priority 1: Village Level -> Priority 2: Area Level -> Priority 3: Global Setting
+    const parentArea = v.areaId ? allAreas.find(a => a.id === v.areaId) : allAreas.find(a => Array.isArray(a.pincodes) && a.pincodes.some(p => String(p).toLowerCase() === normKey));
 
-  return {
-    isServiceable: !isPaused,
-    isPaused,
-    pauseReason,
-    villageId: v.id,
-    villageName: v.name,
-    pincode: v.pincode || null,
-    areaId: v.areaId || null,
-    overrideMode,
-    appliedConfiguration: overrideMode === 'COMPLETE' ? 'Complete Village Override' : 'Individual Field Override',
-    deliveryFee: effectiveFee,
-    minimumOrder: effectiveMinOrder,
-    freeDeliveryThreshold: effectiveFreeThreshold,
-    estimatedDelivery: effectiveEstimatedDelivery,
-    estimatedMinutes: effectiveEstMinutes,
-    radiusKm: effectiveRadius,
-    exceedsStandardBoundary,
-    allowCod: effectiveAllowCod,
-    allowScheduled: effectiveAllowScheduled,
-    sources,
-    customSlots: v.customSlots || null,
-    deliveryHours: v.deliveryHours || null,
-    scheduleNote: v.schedule || null,
-    storeSchedule
-  };
+    let effectiveOpenStr = null;
+    let effectiveCloseStr = null;
+    let hoursSource = 'GLOBAL_DEFAULT';
+
+    if (v.openingTime && v.closingTime && String(v.openingTime).trim() && String(v.closingTime).trim()) {
+      effectiveOpenStr = String(v.openingTime).trim();
+      effectiveCloseStr = String(v.closingTime).trim();
+      hoursSource = 'VILLAGE_OVERRIDE';
+    } else if (parentArea && parentArea.openingTime && parentArea.closingTime && String(parentArea.openingTime).trim() && String(parentArea.closingTime).trim()) {
+      effectiveOpenStr = String(parentArea.openingTime).trim();
+      effectiveCloseStr = String(parentArea.closingTime).trim();
+      hoursSource = 'AREA_OVERRIDE';
+    } else {
+      effectiveOpenStr = globalDefaults.openingTime || '07:00';
+      effectiveCloseStr = globalDefaults.closingTime || '22:00';
+      hoursSource = 'GLOBAL_DEFAULT';
+    }
+    sources.operatingHours = hoursSource;
+
+    const villageStoreSchedule = await resolveEffectiveStoreSchedule({
+      targetDateStr,
+      targetTimeStr,
+      prismaClient,
+      customOpeningTime: effectiveOpenStr,
+      customClosingTime: effectiveCloseStr,
+      customRuleSource: hoursSource,
+      customRuleDetails: `${hoursSource === 'VILLAGE_OVERRIDE' ? 'Village' : hoursSource === 'AREA_OVERRIDE' ? 'Delivery Area' : 'Store Default'} operating hours (${effectiveOpenStr} – ${effectiveCloseStr})`
+    });
+
+    const effectiveEstimatedDelivery = `${effectiveEstMinutes} minutes`;
+
+    return {
+      isServiceable: !isPaused,
+      isPaused,
+      pauseReason,
+      villageId: v.id,
+      villageName: v.name,
+      pincode: v.pincode || null,
+      areaId: v.areaId || null,
+      overrideMode,
+      appliedConfiguration: overrideMode === 'COMPLETE' ? 'Complete Village Override' : 'Individual Field Override',
+      deliveryFee: effectiveFee,
+      minimumOrder: effectiveMinOrder,
+      freeDeliveryThreshold: effectiveFreeThreshold,
+      estimatedDelivery: effectiveEstimatedDelivery,
+      estimatedMinutes: effectiveEstMinutes,
+      openingTime: effectiveOpenStr,
+      closingTime: effectiveCloseStr,
+      hoursSource,
+      radiusKm: effectiveRadius,
+      exceedsStandardBoundary,
+      allowCod: effectiveAllowCod,
+      allowScheduled: effectiveAllowScheduled,
+      sources,
+      customSlots: v.customSlots || null,
+      deliveryHours: v.deliveryHours || null,
+      scheduleNote: v.schedule || null,
+      storeSchedule: villageStoreSchedule,
+      isOpenNow: villageStoreSchedule.isOpenNow,
+      storeStatus: villageStoreSchedule.storeStatus
+    };
 }

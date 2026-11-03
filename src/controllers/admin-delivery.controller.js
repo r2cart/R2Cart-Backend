@@ -47,6 +47,8 @@ const villageData = (body) => {
     allowCod: body.allowCod !== undefined ? Boolean(body.allowCod) : true,
     allowScheduled: body.allowScheduled !== undefined ? Boolean(body.allowScheduled) : true,
     estimatedMinutes: body.estimatedMinutes ? Number(body.estimatedMinutes) : 30,
+    openingTime: body.openingTime && String(body.openingTime).trim() ? String(body.openingTime).trim() : null,
+    closingTime: body.closingTime && String(body.closingTime).trim() ? String(body.closingTime).trim() : null,
     emergencyRestrictions: body.emergencyRestrictions || null,
     seasonalRules: body.seasonalRules || null,
     notes: body.notes ? String(body.notes).trim() : null,

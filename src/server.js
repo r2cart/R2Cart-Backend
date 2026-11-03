@@ -1,7 +1,7 @@
 import {app} from './app.js';
 import {env} from './config/env.js';
 import {prisma} from './config/prisma.js';
-import {ensureStoreSettingColumns, ensureCategoryAdminColumns, ensureProductDeliveryScopeColumns, ensureDeliveryStaffColumns, ensureHomepageRankingTables, ensureDeliveryChatTable, autoSyncPrismaSchema, ensureSuperAdminAccount} from './services/schema-guard.service.js';
+import {ensureStoreSettingColumns, ensureCategoryAdminColumns, ensureProductDeliveryScopeColumns, ensureDeliveryStaffColumns, ensureHomepageRankingTables, ensureDeliveryChatTable, ensureDeliveryOperatingHoursColumns, autoSyncPrismaSchema, ensureSuperAdminAccount} from './services/schema-guard.service.js';
 
 const server=app.listen(env.port,async()=>{
  console.log(`R2Cart API running at http://localhost:${env.port}/api/v1 (ENV: ${env.nodeEnv})`);
@@ -14,6 +14,7 @@ const server=app.listen(env.port,async()=>{
   await ensureDeliveryStaffColumns();
   await ensureHomepageRankingTables();
   await ensureDeliveryChatTable();
+  await ensureDeliveryOperatingHoursColumns();
  }catch(err){
   console.error('[Startup] Schema guard check notice:', err.message);
  }

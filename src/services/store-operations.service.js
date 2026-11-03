@@ -57,7 +57,7 @@ export function minutesToTimeString(minutes) {
  * 4. Weekly operating schedule
  * 5. Global default schedule
  */
-export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeStr, prismaClient = prisma, settings: inputSettings } = {}) {
+export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeStr, prismaClient = prisma, settings: inputSettings, customOpeningTime, customClosingTime, customRuleSource, customRuleDetails } = {}) {
   const currentNow = new Date();
   const currentKolkata = getKolkataDateTime(currentNow);
 
@@ -84,8 +84,8 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
   }));
 
   const globalDefault = {
-    openingTime: settings?.openingTime || '07:00',
-    closingTime: settings?.closingTime || '21:00',
+    openingTime: customOpeningTime || settings?.openingTime || '07:00',
+    closingTime: customClosingTime || settings?.closingTime || '21:00',
     isSchedulingEnabled: settings?.isSchedulingEnabled ?? true,
     allowAfterHoursScheduledOrders: settings?.allowAfterHoursScheduledOrders ?? true,
     advanceBookingDays: settings?.advanceBookingDays || 4,
@@ -151,10 +151,12 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
   const holidayMatch = holidays.find(h => (typeof h === 'string' ? h === evalDateStr : h.date === evalDateStr));
 
   // Determine Effective Hours and Responsible Rule
-  let ruleSource = 'GLOBAL_DEFAULT';
+  let ruleSource = customRuleSource || 'GLOBAL_DEFAULT';
   let effectiveOpenStr = globalDefault.openingTime;
   let effectiveCloseStr = globalDefault.closingTime;
-  let ruleDetails = `Store default hours (${minutesToTimeString(timeStringToMinutes(effectiveOpenStr))} – ${minutesToTimeString(timeStringToMinutes(effectiveCloseStr))})`;
+  let ruleDetails = customRuleDetails || (customRuleSource
+    ? `Operating hours (${minutesToTimeString(timeStringToMinutes(effectiveOpenStr))} – ${minutesToTimeString(timeStringToMinutes(effectiveCloseStr))})`
+    : `Store default hours (${minutesToTimeString(timeStringToMinutes(effectiveOpenStr))} – ${minutesToTimeString(timeStringToMinutes(effectiveCloseStr))})`);
   let isStoreClosedDay = false;
   let closedReason = null;
 

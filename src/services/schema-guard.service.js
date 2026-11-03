@@ -70,6 +70,38 @@ export async function generateNextDeliveryStaffId() {
   return `R2D-${maxNum + 1}`;
 }
 
+export async function ensureDeliveryOperatingHoursColumns() {
+  try {
+    const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+    const tables = ['delivery_villages', 'delivery_areas'];
+    const columns = ['openingTime', 'closingTime'];
+
+    for (const table of tables) {
+      for (const col of columns) {
+        if (isPostgres) {
+          await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${col}" VARCHAR(20) NULL;`).catch(() => {});
+        } else {
+          const existing = await prisma.$queryRawUnsafe(`
+            SELECT COUNT(*) as cnt 
+            FROM information_schema.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = '${table}' 
+              AND COLUMN_NAME = '${col}'
+          `);
+          const count = Number(existing[0]?.cnt || 0);
+          if (count === 0) {
+            console.log(`[Schema] Adding missing column: ${table}.${col}`);
+            await prisma.$executeRawUnsafe(`ALTER TABLE \`${table}\` ADD COLUMN \`${col}\` VARCHAR(20) NULL`);
+          }
+        }
+      }
+    }
+    console.log('[Schema] Delivery Operating Hours columns verified.');
+  } catch (err) {
+    console.warn('[Schema] Operating hours column verify notice:', err.message);
+  }
+}
+
 export async function ensureCategoryAdminColumns() {
   try {
     const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
