@@ -126,6 +126,15 @@ export const delivery=asyncHandler(async(req,res)=>{
     const affectedList = (Array.isArray(activeEmergency?.affectedVillageIds) ? activeEmergency.affectedVillageIds : []).map(x => String(x).trim().toLowerCase());
     const affectedSet = new Set(affectedList);
 
+    const kolkataTime = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(new Date());
+    const [curH, curM] = kolkataTime.split(':').map(Number);
+    const curMins = curH * 60 + curM;
+
     const activeVillages=villages.map(v=>{
       const parentArea = v.areaId ? areas.find(a => a.id === v.areaId) : null;
 
