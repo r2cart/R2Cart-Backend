@@ -459,12 +459,19 @@ export const checkout=asyncHandler(async(req,res)=>{
   }
 
   // 4. Validate Instant vs Scheduled against Village Operating Hours
+  const isCustomHoursVillage = Boolean(
+    rules.hoursSource === 'VILLAGE_OVERRIDE' ||
+    rules.hoursSource === 'AREA_OVERRIDE' ||
+    (rules.openingTime && rules.closingTime)
+  );
   const effectiveVillageSchedule = rules.storeSchedule || storeSchedule;
   if (deliveryType === 'INSTANT') {
+    // If village has custom priority hours, rules.isOpenNow takes strict priority over global schedule!
     const isInstantOpen = Boolean(
-      effectiveVillageSchedule.allowImmediateOrders &&
-      effectiveVillageSchedule.isOpenNow !== false &&
-      rules.isOpenNow !== false
+      rules.isOpenNow !== false &&
+      (isCustomHoursVillage
+        ? (rules.storeSchedule ? rules.storeSchedule.allowImmediateOrders !== false : true)
+        : (effectiveVillageSchedule.allowImmediateOrders && effectiveVillageSchedule.isOpenNow !== false))
     );
 
     if (!isInstantOpen) {
