@@ -4,7 +4,7 @@ import { DEFAULT_BEST_SELLERS_CONFIG, DEFAULT_TOP_PICKS_CONFIG } from '../config
 class RankingService {
   constructor() {
     this.cache = new Map();
-    this.CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    this.CACHE_TTL_MS = 60 * 1000; // 1 minute auto-refresh fallback
   }
 
   // Invalidate in-memory cache

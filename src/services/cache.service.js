@@ -1,3 +1,5 @@
+import { rankingService } from './ranking.service.js';
+
 /**
  * High-performance In-Memory Cache Service
  * Provides sub-millisecond data retrieval for frequently read, infrequently changed resources
@@ -97,17 +99,40 @@ class MemoryCache {
 export const cache = new MemoryCache();
 
 // Specific invalidation helpers
-export const invalidateCatalog = () => cache.delPattern('catalog:*');
+export const invalidateCatalog = () => {
+  cache.delPattern('catalog:*');
+  try {
+    rankingService.invalidateCache();
+  } catch (err) {
+    console.error('[Cache] Failed to invalidate ranking cache:', err);
+  }
+};
+
 export const invalidateCategories = () => {
   cache.del('catalog:categories');
   cache.delPattern('catalog:products:*');
+  try {
+    rankingService.invalidateCache();
+  } catch (err) {
+    console.error('[Cache] Failed to invalidate ranking cache:', err);
+  }
 };
+
 export const invalidateBanners = () => cache.del('catalog:banners');
+
 export const invalidateProducts = () => {
   cache.delPattern('catalog:products:*');
   cache.delPattern('catalog:product:*');
-  cache.delPattern('catalog:bestsellers');
-  cache.delPattern('catalog:toppicks');
+  cache.delPattern('catalog:bestsellers*');
+  cache.delPattern('catalog:toppicks*');
+  cache.del('catalog:bestsellers');
+  cache.del('catalog:toppicks');
+  cache.del('catalog:categories');
+  try {
+    rankingService.invalidateCache();
+  } catch (err) {
+    console.error('[Cache] Failed to invalidate ranking cache:', err);
+  }
 };
 export const invalidateSettings = () => {
   cache.del('catalog:store-settings');

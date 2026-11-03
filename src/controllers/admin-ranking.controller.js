@@ -1,6 +1,7 @@
 import { prisma } from '../config/prisma.js';
 import { rankingService } from '../services/ranking.service.js';
 import { asyncHandler, ok, AppError } from '../utils/response.js';
+import { cache } from '../services/cache.service.js';
 
 function validateConfig(config) {
   if (!config) throw new AppError('Configuration is required', 400);
@@ -161,6 +162,8 @@ export const adminRankingController = {
 
     // Invalidate caches
     rankingService.invalidateCache();
+    cache.del('catalog:bestsellers');
+    cache.del('catalog:toppicks');
 
     return ok(res, {
       version: newVersion,
@@ -240,6 +243,8 @@ export const adminRankingController = {
     });
 
     rankingService.invalidateCache();
+    cache.del('catalog:bestsellers');
+    cache.del('catalog:toppicks');
 
     return ok(res, {
       restoredFromVersion: targetEntry.version,
@@ -251,6 +256,8 @@ export const adminRankingController = {
   // Manual cache refresh
   refreshCache: asyncHandler(async (req, res) => {
     rankingService.invalidateCache();
+    cache.del('catalog:bestsellers');
+    cache.del('catalog:toppicks');
     await Promise.all([
       rankingService.getPublicBestSellers(),
       rankingService.getPublicTopPicks()

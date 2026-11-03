@@ -10,14 +10,14 @@ import {cache} from '../services/cache.service.js';
 import {sendFcmToAdminsNewEnquiry} from '../services/fcm.service.js';
 
 export const categories=asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
-  const data = await cache.getOrSet('catalog:categories', () => catalogRepository.categories(), 900);
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
+  const data = await cache.getOrSet('catalog:categories', () => catalogRepository.categories(), 300);
   ok(res, data);
 });
 
 export const banners=asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
-  const data = await cache.getOrSet('catalog:banners', () => catalogRepository.banners(), 900);
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
+  const data = await cache.getOrSet('catalog:banners', () => catalogRepository.banners(), 300);
   ok(res, data);
 });
 
@@ -40,7 +40,7 @@ export const searchProducts=asyncHandler(async(req,res)=>{
 });
 
 export const products=asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=120, stale-while-revalidate=300');
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
   const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||20));
   if(req.query.q){
     const searchRes=await smartSearchProducts({
@@ -87,15 +87,15 @@ export const products=asyncHandler(async(req,res)=>{
   const formattedRows = rows.map(row=>({...productDto(row),variants:row.variantGroupId?packs.filter(pack=>pack.variantGroupId===row.variantGroupId).map(productDto):[]}));
   const meta = {page,limit,total,pages:Math.ceil(total/limit)};
 
-  cache.set(cacheKey, { data: formattedRows, meta }, 300);
+  cache.set(cacheKey, { data: formattedRows, meta }, 120);
 
   ok(res,formattedRows,'Products fetched',meta);
 });
 
 export const product=asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
   const id = req.params.id;
-  const row = await cache.getOrSet(`catalog:product:${id}`, () => catalogRepository.product(id), 600);
+  const row = await cache.getOrSet(`catalog:product:${id}`, () => catalogRepository.product(id), 120);
   if(!row)throw new AppError('Product not found',404);
   ok(res,productDto(row));
 });
