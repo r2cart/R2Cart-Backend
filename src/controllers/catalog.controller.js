@@ -171,6 +171,12 @@ export const delivery=asyncHandler(async(req,res)=>{
         ))
       );
 
+      const [oH, oM] = openingTime.split(':').map(Number);
+      const openMins = oH * 60 + oM;
+      const [cH, cM] = closingTime.split(':').map(Number);
+      const closeMins = cH * 60 + cM;
+      const isVillageWithinHours = curMins >= openMins && curMins < closeMins;
+
       return {
         id:v.id,
         name:v.name,
@@ -183,6 +189,8 @@ export const delivery=asyncHandler(async(req,res)=>{
         openingTime,
         closingTime,
         hoursSource,
+        isOpenNow: isVillageWithinHours,
+        isClosed: !isVillageWithinHours,
         schedule:v.schedule,
         allowCod:v.allowCod ?? true,
         allowScheduled:v.allowScheduled ?? true,
@@ -211,6 +219,12 @@ export const delivery=asyncHandler(async(req,res)=>{
       const areaClose = a.closingTime && String(a.closingTime).trim() ? String(a.closingTime).trim() : (settings?.closingTime || '22:00');
       const areaHoursSource = a.openingTime && a.closingTime ? 'AREA_OVERRIDE' : 'GLOBAL_DEFAULT';
 
+      const [aoH, aoM] = areaOpen.split(':').map(Number);
+      const areaOpenMins = aoH * 60 + aoM;
+      const [acH, acM] = areaClose.split(':').map(Number);
+      const areaCloseMins = acH * 60 + acM;
+      const isAreaWithinHours = curMins >= areaOpenMins && curMins < areaCloseMins;
+
       return {
         id:a.id,
         name:a.name,
@@ -222,6 +236,8 @@ export const delivery=asyncHandler(async(req,res)=>{
         openingTime:areaOpen,
         closingTime:areaClose,
         hoursSource:areaHoursSource,
+        isOpenNow: isAreaWithinHours,
+        isClosed: !isAreaWithinHours,
         radiusKm:Number(a.radiusKm||settings?.globalDeliveryRadius||5),
         isVillage:false,
         isPaused:isAreaSuspended,

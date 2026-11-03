@@ -151,9 +151,10 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
   const holidayMatch = holidays.find(h => (typeof h === 'string' ? h === evalDateStr : h.date === evalDateStr));
 
   // Determine Effective Hours and Responsible Rule
+  const hasCustomHours = Boolean(customOpeningTime && customClosingTime);
   let ruleSource = customRuleSource || 'GLOBAL_DEFAULT';
-  let effectiveOpenStr = globalDefault.openingTime;
-  let effectiveCloseStr = globalDefault.closingTime;
+  let effectiveOpenStr = customOpeningTime || globalDefault.openingTime;
+  let effectiveCloseStr = customClosingTime || globalDefault.closingTime;
   let ruleDetails = customRuleDetails || (customRuleSource
     ? `Operating hours (${minutesToTimeString(timeStringToMinutes(effectiveOpenStr))} – ${minutesToTimeString(timeStringToMinutes(effectiveCloseStr))})`
     : `Store default hours (${minutesToTimeString(timeStringToMinutes(effectiveOpenStr))} – ${minutesToTimeString(timeStringToMinutes(effectiveCloseStr))})`);
@@ -179,6 +180,12 @@ export async function resolveEffectiveStoreSchedule({ targetDateStr, targetTimeS
     closedReason = typeof holidayMatch === 'object' && holidayMatch.name ? `Store Holiday: ${holidayMatch.name}` : 'Store Holiday';
     ruleSource = 'PLANNED_HOLIDAY';
     ruleDetails = closedReason;
+  } else if (hasCustomHours) {
+    // Priority 1 / Priority 2: Village or Area Override directly governs operating hours
+    ruleSource = customRuleSource || 'VILLAGE_OVERRIDE';
+    ruleDetails = customRuleDetails || `Operating hours (${effectiveOpenStr} – ${effectiveCloseStr})`;
+    effectiveOpenStr = customOpeningTime;
+    effectiveCloseStr = customClosingTime;
   } else if (specialDayMatch) {
     ruleSource = 'SPECIAL_DATE';
     ruleDetails = `Special date schedule: ${specialDayMatch.name || evalDateStr}`;

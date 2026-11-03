@@ -458,6 +458,38 @@ export const checkout=asyncHandler(async(req,res)=>{
     throw new AppError(`Cash on Delivery is currently unavailable for ${rules.villageName||address.area}.`,422);
   }
 
+  // 4. Validate Instant vs Scheduled against Village Operating Hours
+  const effectiveVillageSchedule = rules.storeSchedule || storeSchedule;
+  if (deliveryType === 'INSTANT') {
+    const isInstantOpen = Boolean(
+      effectiveVillageSchedule.allowImmediateOrders &&
+      effectiveVillageSchedule.isOpenNow !== false &&
+      rules.isOpenNow !== false
+    );
+
+    if (!isInstantOpen) {
+      const errStatus = effectiveVillageSchedule.ruleSource === 'EMERGENCY' ? 423 : 422;
+      const vName = rules.villageName || address.area;
+      const hoursMsg = rules.openingTime && rules.closingTime
+        ? `Operating hours for ${vName} are ${rules.openingTime} – ${rules.closingTime}.`
+        : `Store is currently closed for ${vName}.`;
+      throw new AppError(
+        `${hoursMsg} Instant delivery is currently closed. You can schedule your order for the next available delivery slot.`,
+        errStatus
+      );
+    }
+  }
+
+  if (deliveryType === 'SCHEDULED') {
+    if (!effectiveVillageSchedule.allowScheduledOrders || rules.allowScheduled === false) {
+      const errStatus = effectiveVillageSchedule.ruleSource === 'EMERGENCY' ? 423 : 422;
+      throw new AppError(
+        `Scheduled deliveries are currently unavailable for ${rules.villageName || address.area}.`,
+        errStatus
+      );
+    }
+  }
+
   const addressSnapshot={id:address.id,name:address.name,fullName:address.name,mobile:address.mobile,house:address.house,street:address.street||'',landmark:address.landmark||'',area:address.area,villageName:rules.villageName||address.area,villageId:rules.villageId||rules.zoneId||null,city:address.city,district:address.district||'',state:address.state||'',pin:address.pin||'',pincode:address.pin||'',type:address.type||'Home',deliveryZone:{id:rules.villageId||rules.zoneId,name:rules.villageName||rules.zoneName,estimatedDelivery:rules.estimatedDelivery}};
   const result = await prisma.$transaction(async tx => {
     const t = await calculateCart(tx, req.user.id, req.body.couponCode, rules);

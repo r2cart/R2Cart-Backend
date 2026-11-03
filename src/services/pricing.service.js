@@ -51,7 +51,12 @@ export async function resolveDeliveryRules(tx, area) {
     allowCod: resolved.allowCod,
     allowScheduled: resolved.allowScheduled,
     sources: resolved.sources,
-    storeSchedule: resolved.storeSchedule
+    storeSchedule: resolved.storeSchedule,
+    isOpenNow: resolved.isOpenNow,
+    isClosed: !resolved.isOpenNow,
+    openingTime: resolved.openingTime,
+    closingTime: resolved.closingTime,
+    hoursSource: resolved.hoursSource
   };
 }
 
