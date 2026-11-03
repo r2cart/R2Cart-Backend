@@ -9,28 +9,29 @@ export async function runOneTimeProductionCleanup() {
   console.log('[LiveCleanup] Starting real live database cleanup...');
 
   try {
-    // Disable foreign key checks for this cleanup session
+    // 1. Temporarily disable foreign key checks for this MySQL session
     await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 0;');
 
-    // 1. Delete all inquiries & support tickets
-    const deletedEnquiries = await prisma.productEnquiry.deleteMany({});
-    const deletedTicketMessages = await prisma.ticketMessage.deleteMany({});
-    const deletedSupportTickets = await prisma.supportTicket.deleteMany({});
+    // 2. Delete all inquiries & support tickets
+    const [deletedEnquiries, deletedTicketMessages, deletedSupportTickets] = await Promise.all([
+      prisma.productEnquiry.deleteMany({}),
+      prisma.ticketMessage.deleteMany({}),
+      prisma.supportTicket.deleteMany({})
+    ]);
 
-    // 2. Delete all orders and related records
-    await prisma.$executeRawUnsafe('DELETE FROM order_fifo_allocations;');
-    await prisma.$executeRawUnsafe('DELETE FROM delivery_chat_messages;');
-    await prisma.$executeRawUnsafe('DELETE FROM cash_collections;');
-    await prisma.$executeRawUnsafe('DELETE FROM delivery_status_logs;');
-    await prisma.$executeRawUnsafe('DELETE FROM delivery_proofs;');
-    await prisma.$executeRawUnsafe('DELETE FROM delivery_assignments;');
-    await prisma.$executeRawUnsafe('DELETE FROM payments;');
-    await prisma.$executeRawUnsafe('DELETE FROM order_status_history;');
-    await prisma.$executeRawUnsafe('DELETE FROM order_items;');
-    await prisma.$executeRawUnsafe('DELETE FROM coupon_usages;');
-    await prisma.$executeRawUnsafe('DELETE FROM orders;');
+    // 3. Delete all orders and child records safely
+    await prisma.orderFifoAllocation.deleteMany({}).catch(() => {});
+    await prisma.deliveryChatMessage.deleteMany({}).catch(() => {});
+    await prisma.deliveryStatusLog.deleteMany({}).catch(() => {});
+    await prisma.deliveryProof.deleteMany({}).catch(() => {});
+    await prisma.deliveryAssignment.deleteMany({}).catch(() => {});
+    await prisma.payment.deleteMany({}).catch(() => {});
+    await prisma.orderStatusHistory.deleteMany({}).catch(() => {});
+    await prisma.orderItem.deleteMany({}).catch(() => {});
+    await prisma.couponUsage.deleteMany({}).catch(() => {});
+    const deletedOrders = await prisma.order.deleteMany({});
 
-    // 3. Find Customer Users to delete (excluding staff/admins and tevadej256@hopefunder.com)
+    // 4. Find and delete Customer Users (preserving staff/admins and tevadej256@hopefunder.com)
     const customersToDelete = await prisma.user.findMany({
       where: {
         role: 'CUSTOMER',
@@ -45,15 +46,15 @@ export async function runOneTimeProductionCleanup() {
     if (customersToDelete.length > 0) {
       const deleteIds = customersToDelete.map(u => u.id);
 
-      await prisma.address.deleteMany({ where: { userId: { in: deleteIds } } });
-      await prisma.cartItem.deleteMany({ where: { cart: { userId: { in: deleteIds } } } });
-      await prisma.cart.deleteMany({ where: { cart: { userId: { in: deleteIds } } } }).catch(() => {});
-      await prisma.favorite.deleteMany({ where: { userId: { in: deleteIds } } });
-      await prisma.searchHistory.deleteMany({ where: { userId: { in: deleteIds } } });
-      await prisma.refreshToken.deleteMany({ where: { userId: { in: deleteIds } } });
-      await prisma.deviceToken.deleteMany({ where: { userId: { in: deleteIds } } });
-      await prisma.pushSubscription.deleteMany({ where: { userId: { in: deleteIds } } });
-      await prisma.productRating.deleteMany({ where: { userId: { in: deleteIds } } });
+      await prisma.address.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
+      await prisma.cartItem.deleteMany({ where: { cart: { userId: { in: deleteIds } } } }).catch(() => {});
+      await prisma.cart.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
+      await prisma.favorite.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
+      await prisma.searchHistory.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
+      await prisma.refreshToken.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
+      await prisma.deviceToken.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
+      await prisma.pushSubscription.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
+      await prisma.productRating.deleteMany({ where: { userId: { in: deleteIds } } }).catch(() => {});
 
       const deletedUsers = await prisma.user.deleteMany({
         where: { id: { in: deleteIds } }
@@ -61,7 +62,7 @@ export async function runOneTimeProductionCleanup() {
       deletedCustomersCount = deletedUsers.count;
     }
 
-    // Re-enable foreign key checks
+    // 5. Re-enable foreign key checks
     await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 1;');
 
     const remainingUsers = await prisma.user.findMany({
