@@ -111,7 +111,7 @@ export const suggestions=asyncHandler(async(req,res)=>{
   ok(res,rows.map(r=>({id:r.id,name:r.name,unit:r.unit,price:Number(r.price),stock:r.stock,image:r.images?.[0]?.url||null})));
 });
 export const delivery=asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
   const cachedData = await cache.getOrSet('catalog:delivery', async () => {
     const [areas,villages,settings,schedule]=await Promise.all([
       prisma.deliveryArea.findMany({where:{status:'ACTIVE'}}),
@@ -208,13 +208,13 @@ export const delivery=asyncHandler(async(req,res)=>{
       freeDeliveryThreshold:Number(settings?.freeDeliveryThreshold||0),
       estimatedDelivery:settings?.estimatedDelivery||'15-30 minutes'
     };
-  }, 180);
+  }, 60);
 
   ok(res, cachedData);
 });
 export const deliverySlots=asyncHandler(async(req,res)=>ok(res,await getAvailableCustomerSlots(req.query.date)));
 export const settings=asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=120, stale-while-revalidate=300');
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
   const cachedSettings = await cache.getOrSet('catalog:store-settings', async () => {
     const [setting, effectiveStatus] = await Promise.all([
       prisma.storeSetting.findUnique({where:{id:1}}),
@@ -224,7 +224,7 @@ export const settings=asyncHandler(async(req,res)=>{
       ...(setting || {}),
       effectiveStatus
     };
-  }, 300);
+  }, 60);
   ok(res, cachedSettings);
 });
 export const contactInquiry=asyncHandler(async(req,res)=>{

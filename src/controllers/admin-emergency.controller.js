@@ -2,6 +2,7 @@ import { prisma } from '../config/prisma.js';
 import { AppError, asyncHandler, ok, created } from '../utils/response.js';
 import { logAudit } from '../services/audit.service.js';
 import { resolveEffectiveStoreSchedule } from '../services/store-operations.service.js';
+import { invalidateSettings } from '../services/cache.service.js';
 
 export const emergency = {
   // Get current emergency status and active restrictions
@@ -196,6 +197,8 @@ export const emergency = {
       details: emergencyPayload
     });
 
+    invalidateSettings();
+
     ok(res, emergencyPayload, 'Emergency restrictions activated successfully');
   }),
 
@@ -258,6 +261,8 @@ export const emergency = {
       resourceName: 'Emergency Restrictions Lifted',
       details: { deactivatedAt: new Date().toISOString() }
     });
+
+    invalidateSettings();
 
     ok(res, emergencyPayload, 'Emergency restrictions deactivated. Normal store operations resumed.');
   }),
