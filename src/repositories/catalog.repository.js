@@ -3,7 +3,7 @@ import {optimizeCloudinaryUrl} from '../services/image.service.js';
 
 export const catalogRepository={
   categories: async () => {
-    const list = await prisma.category.findMany({where:{status:'ACTIVE'},orderBy:{position:'asc'}});
+    const list = await prisma.category.findMany({where:{status:'ACTIVE'},orderBy:[{position:'asc'},{name:'asc'}]});
     return list.map(c => ({
       ...c,
       image: optimizeCloudinaryUrl(c.image, { width: 400 })
