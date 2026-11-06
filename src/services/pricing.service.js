@@ -212,7 +212,33 @@ export async function calculateCart(tx, userId, couponCode, rules) {
   }
 
   const productDiscount = itemTotal - subtotal;
-  const extraShippingFees = cart.items.reduce((acc, itm) => acc + (Number(itm.product?.shippingFee) || 0), 0);
+
+  // Calculate quantity-based shipping fees and solo / minimum other cart value conditions
+  let extraShippingFees = 0;
+  for (const itm of cart.items) {
+    const feePerUnit = Math.max(0, Number(itm.product?.shippingFee) || 0);
+    if (feePerUnit <= 0) continue;
+
+    const qty = Math.max(1, parseInt(itm.quantity, 10) || 1);
+    const soloOnly = Boolean(itm.product?.shippingSoloOnly);
+    const minOtherCartValue = Math.max(0, Number(itm.product?.shippingMinOtherCartValue) || 0);
+
+    if (soloOnly) {
+      const isSolo = cart.items.length === 1;
+      if (isSolo) {
+        extraShippingFees += feePerUnit * qty;
+      } else {
+        const itemLineTotal = Number(itm.product?.price || 0) * qty;
+        const otherItemsSubtotal = Math.max(0, subtotal - itemLineTotal);
+        if (minOtherCartValue > 0 && otherItemsSubtotal < minOtherCartValue) {
+          extraShippingFees += feePerUnit * qty;
+        }
+      }
+    } else {
+      extraShippingFees += feePerUnit * qty;
+    }
+  }
+
   const deliveryFee = (subtotal >= delivery.freeDeliveryThreshold && delivery.freeDeliveryThreshold > 0)
     ? extraShippingFees
     : ((Number(delivery.deliveryFee) || 0) + extraShippingFees);

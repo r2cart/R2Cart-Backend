@@ -414,7 +414,7 @@ export const checkout=asyncHandler(async(req,res)=>{
   } catch (err) {
     if (localItems.length === 0) {
       // All items in cart are Pan-India or Custom matched!
-      const totalShippingFee = cartItems.reduce((acc, itm) => acc + (Number(itm.product?.shippingFee) || 0), 0);
+      const totalShippingFee = cartItems.reduce((acc, itm) => acc + (Math.max(0, Number(itm.product?.shippingFee) || 0) * (parseInt(itm.quantity, 10) || 1)), 0);
       rules = {
         matchType: 'COURIER_PAN_INDIA',
         villageId: null,

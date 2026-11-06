@@ -83,6 +83,8 @@ const productData=(body, user)=>{
  let deliveryScope = 'LOCAL';
  let deliveryLocations = null;
  let shippingFee = 0;
+ let shippingSoloOnly = false;
+ let shippingMinOtherCartValue = 0;
  let orderMode = 'DIRECT_ORDER';
 
  if (allowsSpecialtyScoping) {
@@ -106,6 +108,14 @@ const productData=(body, user)=>{
      shippingFee = Math.max(0, Number(body.shippingFee) || 0);
    }
 
+   if (body.shippingSoloOnly !== undefined) {
+     shippingSoloOnly = Boolean(body.shippingSoloOnly);
+   }
+
+   if (body.shippingMinOtherCartValue !== undefined && body.shippingMinOtherCartValue !== null && body.shippingMinOtherCartValue !== '') {
+     shippingMinOtherCartValue = Math.max(0, Number(body.shippingMinOtherCartValue) || 0);
+   }
+
    const VALID_ORDER_MODES = ['DIRECT_ORDER', 'CONTACT_REQUEST', 'BOTH'];
    let reqOrderMode = String(body.orderMode || 'DIRECT_ORDER').trim().toUpperCase();
    if (VALID_ORDER_MODES.includes(reqOrderMode)) {
@@ -124,6 +134,8 @@ const productData=(body, user)=>{
    deliveryScope,
    deliveryLocations,
    shippingFee,
+   shippingSoloOnly,
+   shippingMinOtherCartValue,
    orderMode,
    minOrderQty: (body.minOrderQty !== undefined && body.minOrderQty !== null && body.minOrderQty !== '')
      ? Math.max(1, parseInt(body.minOrderQty, 10) || 1)
@@ -268,6 +280,8 @@ export const products={
               deliveryScope: data.deliveryScope,
               deliveryLocations: data.deliveryLocations,
               shippingFee: data.shippingFee,
+              shippingSoloOnly: data.shippingSoloOnly,
+              shippingMinOtherCartValue: data.shippingMinOtherCartValue,
               orderMode: data.orderMode,
               ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold }),
               variantGroupId: effectiveGroupId,
