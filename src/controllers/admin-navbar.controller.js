@@ -30,14 +30,14 @@ export const notifications=asyncHandler(async(req,res)=>{
  }
 
  const [orders,stock,tickets,enquiries]=await Promise.all([
-  preferences.orders?prisma.order.findMany({where:orderWhere,select:{id:true,orderNumber:true,createdAt:true},orderBy:{createdAt:'desc'},take:20}):[],
+  preferences.orders?prisma.order.findMany({where:orderWhere,select:{id:true,orderNumber:true,grandTotal:true,createdAt:true,user:{select:{name:true}},items:{select:{id:true}}},orderBy:{createdAt:'desc'},take:20}):[],
   preferences.stock?prisma.product.findMany({where:stockWhere,select:{id:true,name:true,stock:true,updatedAt:true},orderBy:{stock:'asc'},take:20}):[],
   (!scope.isScoped && preferences.customers)?prisma.supportTicket.findMany({where:{status:{in:['OPEN','PENDING']}},select:{id:true,ticketNumber:true,subject:true,updatedAt:true},orderBy:{updatedAt:'desc'},take:20}):[],
   prisma.productEnquiry.findMany({where:enquiryWhere,include:{product:{select:{id:true,name:true}}},orderBy:{createdAt:'desc'},take:20})
  ]);
 
  const allNotices = [
-  ...orders.map(o=>({id:`order-${o.id}`,type:'ORDER',title:`New order ${o.orderNumber}`,text:'Waiting for confirmation',date:o.createdAt,path:`/admin/orders/${o.id}`})),
+  ...orders.map(o=>({id:`order-${o.id}`,type:'ORDER',title:`New order #${o.orderNumber}`,orderNumber:o.orderNumber,total:Number(o.grandTotal||0).toLocaleString('en-IN'),customerName:o.user?.name||'Customer',itemsCount:o.items?.length||1,text:`₹${Number(o.grandTotal||0).toLocaleString('en-IN')} · ${o.user?.name||'Customer'}`,date:o.createdAt,path:`/admin/orders/${o.id}`})),
   ...enquiries.map(e=>({id:`enquiry-${e.id}`,type:'ENQUIRY',title:`New Inquiry: ${e.name}`,text:`${e.product?.name || 'Custom Product'} · 📞 ${e.phone}`,date:e.createdAt,path:`/admin/enquiries`})),
   ...stock.map(p=>({id:`stock-${p.id}-${p.stock}`,type:'STOCK',title:p.name,text:`${p.stock} units remaining`,date:p.updatedAt,path:'/admin/inventory'})),
   ...tickets.map(t=>({id:`ticket-${t.id}-${new Date(t.updatedAt).getTime()}`,type:'TICKET',title:t.ticketNumber,text:t.subject,date:t.updatedAt,path:'/admin/support'}))

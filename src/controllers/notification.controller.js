@@ -49,8 +49,12 @@ export const subscribe = asyncHandler(async (req, res) => {
     throw new AppError('Valid push subscription object is required', 400);
   }
 
-  const assignedRole = (req.user?.role === 'ADMIN' || role === 'ADMIN') ? 'ADMIN' : 'CUSTOMER';
-  const userId = (assignedRole === 'ADMIN' && req.user?.role !== 'ADMIN') ? null : (req.user?.id || null);
+  const userRole = req.user?.role || '';
+  const isAdminRole = ['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(userRole) ||
+                      ['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(role);
+
+  const assignedRole = isAdminRole ? (userRole || role || 'ADMIN') : (role || 'CUSTOMER');
+  const userId = req.user?.id || null;
   const userAgent = req.headers['user-agent'] || null;
 
   // SSRF guard — validate endpoint before persisting (BUG-04)
@@ -120,8 +124,12 @@ export const registerFcmToken = asyncHandler(async (req, res) => {
     throw new AppError('Valid FCM device token is required', 400);
   }
 
-  const assignedRole = (req.user?.role === 'ADMIN' || role === 'ADMIN') ? 'ADMIN' : 'CUSTOMER';
-  const userId = (assignedRole === 'ADMIN' && req.user?.role !== 'ADMIN') ? null : (req.user?.id || null);
+  const userRole = req.user?.role || '';
+  const isAdminRole = ['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(userRole) ||
+                      ['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(role);
+
+  const assignedRole = isAdminRole ? (userRole || role || 'ADMIN') : (role || 'CUSTOMER');
+  const userId = req.user?.id || null;
   const userAgent = req.headers['user-agent'] || null;
 
   const saved = await saveDeviceToken({

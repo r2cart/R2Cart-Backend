@@ -90,50 +90,76 @@ export async function sendNotificationToSubscription(sub, payload) {
 
 export async function notifyAdminsNewOrder(order) {
   try {
-    // Find subscriptions belonging to ADMIN or with admin role
+    // Find all active subscriptions for admins / super admins / managers
     const adminSubs = await prisma.pushSubscription.findMany({
       where: {
         OR: [
-          { role: 'ADMIN' },
-          { user: { role: 'ADMIN' } },
+          { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } },
+          { user: { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } } },
+          { user: { staffRole: { in: ['SUPER_ADMIN', 'STORE_MANAGER'] } } },
         ],
       },
+      include: {
+        user: {
+          select: { id: true, role: true, staffRole: true, assignedCategoryIds: true }
+        }
+      }
     });
 
-    let targets = adminSubs;
-    if (!targets.length) {
-      targets = await prisma.pushSubscription.findMany({
-        take: 5,
-        orderBy: { updatedAt: 'desc' },
-      });
-      console.log(`[Push Notification] No explicit ADMIN subscriptions. Dispatching order #${order.orderNumber} to ${targets.length} active device(s).`);
+    if (!adminSubs.length) {
+      console.log(`[Push Notification] No admin subscriptions found for order #${order.orderNumber}.`);
+      return;
     }
-    if (!targets.length) return;
+
+    // Filter scoped category admins if applicable
+    const orderCatIds = new Set((order.items || []).map(i => i.product?.categoryId).filter(Boolean));
+    const eligibleSubs = adminSubs.filter(sub => {
+      if (sub.role === 'SUPER_ADMIN' || sub.user?.role === 'SUPER_ADMIN' || sub.user?.staffRole === 'SUPER_ADMIN') {
+        return true;
+      }
+      const u = sub.user;
+      if (!u) return true;
+      const assigned = Array.isArray(u.assignedCategoryIds) ? u.assignedCategoryIds : [];
+      const isScoped = u.staffRole === 'CATEGORY_ADMIN' || assigned.length > 0;
+      if (!isScoped) return true;
+      return assigned.some(cid => orderCatIds.has(cid));
+    });
+
+    if (!eligibleSubs.length) return;
 
     const customerName = order.user?.name || order.addressSnapshot?.name || 'A customer';
     const total = Number(order.grandTotal || 0).toLocaleString('en-IN');
     const itemsCount = order.items?.length || 1;
 
     const payload = {
-      title: '🚨 New Order Received!',
-      body: `Order #${order.orderNumber} for ₹${total} (${itemsCount} items) placed by ${customerName}.`,
+      title: '🚨 New Order Received! · R2Cart',
+      body: `Order #${order.orderNumber} (₹${total}) placed by ${customerName}. Tap to view.`,
       icon: '/r2cart-logo.png',
       badge: '/r2cart-logo.png',
-      tag: `new-order-${order.id}`,
+      tag: `order-${order.id}`, // Stable order tag prevents spam stacking & enables instant update
+      renotify: true,
+      requireInteraction: true,
+      silent: false,
+      timestamp: Date.now(),
+      vibrate: [500, 150, 500, 150, 500, 200, 400],
       url: `/admin/orders/${order.id}`,
       data: {
         url: `/admin/orders/${order.id}`,
         orderId: order.id,
         orderNumber: order.orderNumber,
+        total: total,
+        customerName: customerName,
+        itemsCount: itemsCount,
+        time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
         type: 'ADMIN_NEW_ORDER',
       },
     };
 
     const results = await Promise.allSettled(
-      targets.map((sub) => sendNotificationToSubscription(sub, payload))
+      eligibleSubs.map((sub) => sendNotificationToSubscription(sub, payload))
     );
     const sentCount = results.filter((r) => r.status === 'fulfilled' && r.value?.success).length;
-    console.log(`[Push Notification] Dispatched order #${order.orderNumber} to admins/targets: ${sentCount}/${targets.length} delivered.`);
+    console.log(`[Push Notification] Dispatched order #${order.orderNumber} to ${sentCount}/${eligibleSubs.length} admin device(s).`);
   } catch (err) {
     console.error('Error in notifyAdminsNewOrder:', err.message);
   }
@@ -144,22 +170,14 @@ export async function notifyAdminsOrderCancelled(order, reason = '', cancelledBy
     const adminSubs = await prisma.pushSubscription.findMany({
       where: {
         OR: [
-          { role: 'ADMIN' },
-          { role: 'SUPER_ADMIN' },
-          { user: { role: 'ADMIN' } },
-          { user: { role: 'SUPER_ADMIN' } },
+          { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } },
+          { user: { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } } },
+          { user: { staffRole: { in: ['SUPER_ADMIN', 'STORE_MANAGER'] } } },
         ],
       },
     });
 
-    let targets = adminSubs;
-    if (!targets.length) {
-      targets = await prisma.pushSubscription.findMany({
-        take: 5,
-        orderBy: { updatedAt: 'desc' },
-      });
-    }
-    if (!targets.length) return;
+    if (!adminSubs.length) return;
 
     const reasonText = reason ? `: "${reason}"` : '';
     const payload = {
@@ -167,7 +185,7 @@ export async function notifyAdminsOrderCancelled(order, reason = '', cancelledBy
       body: `Cancelled by ${cancelledByName}${reasonText}. Deducted items restored to inventory.`,
       icon: '/r2cart-logo.png',
       badge: '/r2cart-logo.png',
-      tag: `order-cancelled-${order.id}`,
+      tag: `order-${order.id}`,
       url: `/admin/orders/${order.id}`,
       data: {
         url: `/admin/orders/${order.id}`,
@@ -179,10 +197,10 @@ export async function notifyAdminsOrderCancelled(order, reason = '', cancelledBy
     };
 
     const results = await Promise.allSettled(
-      targets.map((sub) => sendNotificationToSubscription(sub, payload))
+      adminSubs.map((sub) => sendNotificationToSubscription(sub, payload))
     );
     const sentCount = results.filter((r) => r.status === 'fulfilled' && r.value?.success).length;
-    console.log(`[Push Notification] Order #${order.orderNumber} cancellation dispatched to admins: ${sentCount}/${targets.length} delivered.`);
+    console.log(`[Push Notification] Order #${order.orderNumber} cancellation dispatched to admins: ${sentCount}/${adminSubs.length} delivered.`);
   } catch (err) {
     console.error('Error in notifyAdminsOrderCancelled:', err.message);
   }

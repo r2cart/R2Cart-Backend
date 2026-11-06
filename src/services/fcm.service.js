@@ -144,13 +144,17 @@ export async function sendFcmToAdminsNewOrder(order) {
     await sendFcmMulticast({
       tokens: eligibleTokens.map((t) => t.token),
       notification: {
-        title: '🚨 New Order Received!',
+        title: '🚨 New Order Received! · R2Cart',
         body: `Order #${order.orderNumber} for ₹${total} (${itemsCount} items) placed by ${customerName}.`,
       },
       data: {
         url: `/admin/orders/${order.id}`,
         orderId: order.id,
         orderNumber: order.orderNumber,
+        total: total,
+        customerName: customerName,
+        itemsCount: itemsCount,
+        tag: `order-${order.id}`,
         type: 'ADMIN_NEW_ORDER',
       },
     });
