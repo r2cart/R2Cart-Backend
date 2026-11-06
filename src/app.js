@@ -18,7 +18,17 @@ app.set('trust proxy', 1);
 app.use(compression({ level: 6, threshold: 1024 }));
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: allowOrigin, credentials: true }));
-app.use('/uploads', express.static(resolve(env.uploadDir), { maxAge: env.nodeEnv === 'production' ? '7d' : 0, index: false }));
+app.use(
+  '/uploads',
+  express.static(resolve(env.uploadDir), {
+    maxAge: env.nodeEnv === 'production' ? '7d' : 0,
+    index: false,
+    setHeaders: (res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  })
+);
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(morgan(env.nodeEnv === 'test' ? 'tiny' : 'dev'));
