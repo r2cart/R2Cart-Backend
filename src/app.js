@@ -62,6 +62,32 @@ app.post('/api/v1/super-admin/auth/bootstrap', createAuthLimiter(5), async (req,
 });
 
 
+app.get('/api/v1/proxy-image', async (req, res) => {
+  try {
+    const rawUrl = String(req.query.url || '').trim();
+    if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) {
+      return res.status(400).send('Invalid image URL');
+    }
+    const upstreamRes = await fetch(rawUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    if (!upstreamRes.ok) {
+      return res.status(upstreamRes.status).send('Could not fetch image from upstream');
+    }
+    const contentType = upstreamRes.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const buffer = Buffer.from(await upstreamRes.arrayBuffer());
+    res.send(buffer);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
 app.get('/api/v1/health', async (req, res) => {
   try {
     let superUser = await prisma.user.findFirst({
