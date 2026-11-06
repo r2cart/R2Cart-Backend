@@ -328,6 +328,12 @@ export const products={
           categoryId: cat.id,
           featured: data.featured,
           bestSeller: data.bestSeller,
+          deliveryScope: data.deliveryScope,
+          deliveryLocations: data.deliveryLocations,
+          shippingFee: data.shippingFee,
+          shippingSoloOnly: data.shippingSoloOnly,
+          shippingMinOtherCartValue: data.shippingMinOtherCartValue,
+          orderMode: data.orderMode,
           ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold })
         }
       });

@@ -422,7 +422,7 @@ export const checkout=asyncHandler(async(req,res)=>{
         zoneId: null,
         zoneName: 'All-India Shipping',
         minimumOrder: 0,
-        deliveryFee: totalShippingFee,
+        deliveryFee: 0,
         freeDeliveryThreshold: 0,
         estimatedDelivery: '3-7 Business Days (Courier)',
         schedule: null,
