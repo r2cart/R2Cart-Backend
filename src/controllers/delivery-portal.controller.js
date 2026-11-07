@@ -467,6 +467,19 @@ export const deliveryPortal = {
         }
       });
 
+      if (isCod) {
+        await tx.payment.upsert({
+          where: { orderId: order.id },
+          update: { status: 'PAID', amount: order.grandTotal },
+          create: {
+            orderId: order.id,
+            method: 'COD',
+            status: 'PAID',
+            amount: order.grandTotal
+          }
+        }).catch(() => {});
+      }
+
       // 4. Update proof recipient details if provided
       if (assignment.proofs.length > 0 && (recipientName || recipientPhone || customerOtp)) {
         const latestProof = assignment.proofs[assignment.proofs.length - 1];

@@ -109,13 +109,71 @@ export const orders={
    if(status==='CANCELLED'&&['OUT_FOR_DELIVERY','DELIVERED'].includes(current.status)){
     throw new AppError('Order cannot be cancelled once it is out for delivery',409);
    }
-   const changed=await tx.order.updateMany({where:{id:current.id,status:current.status},data:{status}});
-   if(changed.count!==1)throw new AppError('Order changed in another session. Refresh and retry.',409);
-   if(status==='DELIVERED'){
-    await tx.deliveryAssignment.updateMany({
-      where:{orderId:current.id,isCurrent:true,deliveredAt:null},
-      data:{status:'DELIVERED',deliveredAt:new Date()}
-    });
+   const isDelivered = status === 'DELIVERED';
+   const updateData = { status };
+   if (isDelivered) {
+     updateData.paymentStatus = 'PAID';
+   }
+
+   const changed = await tx.order.updateMany({
+     where: { id: current.id, status: current.status },
+     data: updateData
+   });
+   if (changed.count !== 1) throw new AppError('Order changed in another session. Refresh and retry.', 409);
+
+   if (isDelivered) {
+     const totalAmount = Number(current.grandTotal || 0);
+
+     // 1. Mark payment record as PAID
+     await tx.payment.upsert({
+       where: { orderId: current.id },
+       update: { status: 'PAID', amount: current.grandTotal },
+       create: {
+         orderId: current.id,
+         method: current.paymentMethod || 'COD',
+         status: 'PAID',
+         amount: current.grandTotal
+       }
+     }).catch(() => {});
+
+     // 2. Mark active delivery assignment as DELIVERED
+     await tx.deliveryAssignment.updateMany({
+       where: { orderId: current.id, isCurrent: true, deliveredAt: null },
+       data: { status: 'DELIVERED', deliveredAt: new Date() }
+     });
+
+     // 3. Mark COD Collection as collected & settled (cash collected by admin)
+     if (current.paymentMethod === 'COD') {
+       const existingCod = await tx.codCollection.findFirst({ where: { orderId: current.id } });
+       if (existingCod) {
+         await tx.codCollection.update({
+           where: { id: existingCod.id },
+           data: {
+             collectedAmount: totalAmount,
+             expectedAmount: totalAmount,
+             settlementStatus: 'SETTLED',
+             collectedAt: new Date()
+           }
+         });
+       } else {
+         const activeAssignment = await tx.deliveryAssignment.findFirst({
+           where: { orderId: current.id, isCurrent: true }
+         });
+         if (activeAssignment) {
+           await tx.codCollection.create({
+             data: {
+               assignmentId: activeAssignment.id,
+               orderId: current.id,
+               deliveryPersonId: activeAssignment.deliveryPersonId,
+               expectedAmount: totalAmount,
+               collectedAmount: totalAmount,
+               settlementStatus: 'SETTLED',
+               collectedAt: new Date()
+             }
+           }).catch(() => {});
+         }
+       }
+     }
    }
    if(status==='CANCELLED'){
     for(const item of current.items){
@@ -145,7 +203,8 @@ export const orders={
    }
    const adminActor = req.user?.name ? `${req.user.name} (${req.user.role || 'Admin'})` : 'Store Admin';
    const cancelNote = reason ? `Cancelled by admin (${adminActor}): ${reason}` : `Cancelled by admin (${adminActor})`;
-   const historyNote = status === 'CANCELLED' ? cancelNote : (reason || 'Status updated by store admin');
+   const deliveredNote = `Delivered marked by ${adminActor}. Payment confirmed: ₹${Number(current.grandTotal).toLocaleString('en-IN')} cash collected.`;
+   const historyNote = status === 'CANCELLED' ? cancelNote : (isDelivered ? (reason ? `${deliveredNote} (${reason})` : deliveredNote) : (reason || 'Status updated by store admin'));
 
    await tx.orderStatusHistory.create({data:{orderId:current.id,status,note:historyNote}});
    return tx.order.findUnique({where:{id:current.id},include});
