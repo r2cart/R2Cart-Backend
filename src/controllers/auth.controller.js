@@ -38,7 +38,7 @@ async function issue(res,user,{cookieName,cookiePath='/'}={}){
   httpOnly:true,
   secure:isProd||env.cookieSecure,
   sameSite:isProd?'none':'lax',
-  maxAge:90*86400000,
+  maxAge:3650*86400000,
   path:cookiePath
  });
  return {
@@ -513,11 +513,11 @@ export const refresh = asyncHandler(async (req, res) => {
   let raw = req.body?.refreshToken || req.headers['x-refresh-token'];
   if (!raw) {
     if (role === 'ADMIN') {
-      raw = req.cookies?.r2cart_admin_refresh;
+      raw = req.cookies?.r2cart_admin_refresh || req.cookies?.r2cart_refresh;
     } else if (role === 'DELIVERY') {
-      raw = req.cookies?.r2cart_delivery_refresh;
+      raw = req.cookies?.r2cart_delivery_refresh || req.cookies?.r2cart_refresh;
     } else {
-      raw = req.cookies?.r2cart_refresh;
+      raw = req.cookies?.r2cart_refresh || req.cookies?.r2cart_admin_refresh || req.cookies?.r2cart_delivery_refresh;
     }
   }
   if (!raw) throw new AppError('Refresh token required', 401);
@@ -535,14 +535,10 @@ export const refresh = asyncHandler(async (req, res) => {
   });
 
   const now = new Date();
-  const graceWindowMs = 60 * 1000; // 60 seconds grace window for concurrent reconnects
-  const isWithinGrace = stored?.revokedAt && (now.getTime() - new Date(stored.revokedAt).getTime() < graceWindowMs);
-
   if (
     !stored ||
-    (stored.revokedAt && !isWithinGrace) ||
     stored.expiresAt < now ||
-    !['CUSTOMER', 'ADMIN', 'MANAGER', 'SUPER_ADMIN', 'DELIVERY_PERSON'].includes(stored.user.role)
+    stored.user?.status !== 'ACTIVE'
   ) {
     throw new AppError('Refresh token invalid', 401);
   }
@@ -557,16 +553,12 @@ export const refresh = asyncHandler(async (req, res) => {
   if (role === 'DELIVERY' && !isDelivery) {
     throw new AppError('Unauthorized refresh request for delivery portal', 403);
   }
-  if (!role && isAdmin) {
-    throw new AppError('Admin session cannot be refreshed on customer portal', 403);
-  }
 
-  if (!stored.revokedAt) {
-    await prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: now }
-    }).catch(() => {});
-  }
+  // Extend refresh token validity instead of revoking it
+  await prisma.refreshToken.update({
+    where: { id: stored.id },
+    data: { expiresAt: refreshExpiry() }
+  }).catch(() => {});
 
   const cookieName =
     stored.user.role === 'CUSTOMER'

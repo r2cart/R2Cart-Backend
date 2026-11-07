@@ -7,7 +7,7 @@ import { validate } from '../middleware/validate.js';
 import { addressSchema, addressUpdateSchema, cartSchema, checkoutSchema, searchHistorySchema, supportTicketSchema, orderDetailsUpdateSchema } from '../validators/schemas.js';
 
 export const customerRouter = Router();
-const authCustomer = [authenticate, authorize('CUSTOMER', 'ADMIN', 'MANAGER')];
+const authCustomer = [authenticate, authorize('CUSTOMER', 'ADMIN', 'MANAGER', 'SUPER_ADMIN')];
 customerRouter.put('/products/:id/rating', authCustomer, rateProduct);
 customerRouter.get('/users/me', authCustomer, c.profile.get);
 customerRouter.patch('/users/me', authCustomer, c.profile.update);
