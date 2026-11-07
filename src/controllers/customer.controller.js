@@ -5,7 +5,7 @@ import {calculateCart,resolveDeliveryRules} from '../services/pricing.service.js
 import {sendSupportTicketEmail} from '../services/mail.service.js';
 import {notifyAdminsNewOrder,notifyAdminsOrderCancelled,notifyCustomerOrderPlaced,notifyCustomerOrderStatusUpdate} from '../services/notification.service.js';
 import {sendFcmToAdminsNewOrder,sendFcmToAdminsOrderCancelled,sendFcmToCustomerOrderPlaced,sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
-import {broadcastNewOrder} from '../services/order-stream.service.js';
+import {broadcastNewOrder, broadcastOrderCancelled} from '../services/order-stream.service.js';
 import {logAudit} from '../services/audit.service.js';
 import {getAvailableCustomerSlots} from './admin-scheduling.controller.js';
 import {consumeFifoBatches, reverseFifoAllocations} from '../services/fifo.service.js';
@@ -739,6 +739,7 @@ export const orders={
     notifyCustomerOrderStatusUpdate(row,'CANCELLED',reason).catch(e=>console.error('Customer status push error:',e.message));
     sendFcmToCustomerStatusUpdate(row,'CANCELLED',reason).catch(e=>console.error('Customer FCM status push error:',e.message));
     const customerDisplayName = req.user?.name || row.addressSnapshot?.name || 'Customer';
+    broadcastOrderCancelled(row, reason, customerDisplayName);
     notifyAdminsOrderCancelled(row, reason, customerDisplayName).catch(e=>console.error('Admin order cancel push error:',e.message));
     sendFcmToAdminsOrderCancelled(row, reason, customerDisplayName).catch(e=>console.error('Admin FCM order cancel push error:',e.message));
   }),

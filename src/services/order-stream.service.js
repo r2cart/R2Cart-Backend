@@ -86,3 +86,39 @@ export function broadcastNewOrder(order) {
     }
   }
 }
+
+export function broadcastOrderCancelled(order, reason = '', cancelledByName = 'Customer') {
+  if (!order || clients.size === 0) return;
+
+  const total = Number(order.grandTotal || 0).toLocaleString('en-IN');
+  const itemsCount = order.items?.length || 1;
+  const reasonText = reason ? `: "${reason}"` : '';
+
+  const payload = JSON.stringify({
+    type: 'ORDER_CANCELLED',
+    order: {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      total,
+      customerName: cancelledByName,
+      reason,
+      itemsCount,
+      time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+      url: `/admin/orders/${order.id}`,
+      updatedAt: order.updatedAt,
+      isCancelled: true,
+      title: `❌ Order #${order.orderNumber} Cancelled`,
+      body: `Order cancelled by ${cancelledByName}${reasonText}. Stock restored.`,
+    },
+  });
+
+  for (const client of clients) {
+    try {
+      client.res.write(`data: ${payload}\n\n`);
+    } catch (err) {
+      console.warn('[SSE] Error broadcasting cancel to client:', err.message);
+      clients.delete(client);
+    }
+  }
+}
+

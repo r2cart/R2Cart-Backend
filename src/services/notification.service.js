@@ -172,7 +172,7 @@ export async function notifyAdminsOrderCancelled(order, reason = '', cancelledBy
         OR: [
           { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } },
           { user: { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } } },
-          { user: { staffRole: { in: ['SUPER_ADMIN', 'STORE_MANAGER'] } } },
+          { user: { staffRole: { in: ['SUPER_ADMIN', 'STORE_MANAGER', 'CATEGORY_ADMIN'] } } },
         ],
       },
     });
@@ -182,10 +182,15 @@ export async function notifyAdminsOrderCancelled(order, reason = '', cancelledBy
     const reasonText = reason ? `: "${reason}"` : '';
     const payload = {
       title: `❌ Order #${order.orderNumber} Cancelled`,
-      body: `Cancelled by ${cancelledByName}${reasonText}. Deducted items restored to inventory.`,
+      body: `Cancelled by ${cancelledByName}${reasonText}. Stock restored to inventory.`,
       icon: '/r2cart-logo.png',
       badge: '/r2cart-logo.png',
-      tag: `order-${order.id}`,
+      tag: `order-cancel-${order.id}`,
+      renotify: true,
+      requireInteraction: true,
+      silent: false,
+      timestamp: Date.now(),
+      vibrate: [500, 150, 500, 150, 500, 200, 400],
       url: `/admin/orders/${order.id}`,
       data: {
         url: `/admin/orders/${order.id}`,
