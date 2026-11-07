@@ -12,10 +12,10 @@ import {
 export const notificationRouter = Router();
 
 notificationRouter.get('/vapid-public-key', getVapidPublicKey);
-notificationRouter.post('/subscribe', authenticate, subscribe);
+notificationRouter.post('/subscribe', optionalAuthenticate, subscribe);
 notificationRouter.post('/unsubscribe', unsubscribe);
 notificationRouter.post('/test', authenticate, sendTestPush);
 
 // FCM device token registration
-notificationRouter.post('/fcm/token', authenticate, registerFcmToken);
+notificationRouter.post('/fcm/token', optionalAuthenticate, registerFcmToken);
 notificationRouter.delete('/fcm/token', unregisterFcmToken);

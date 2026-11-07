@@ -4,7 +4,7 @@ import { verifyAccess } from '../utils/tokens.js';
 import { hasPermission } from '../config/permissions.js';
 
 export const authenticate = asyncHandler(async (req, res, next) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query.token;
   if (!token) throw new AppError('Authentication required', 401);
 
   let payload;

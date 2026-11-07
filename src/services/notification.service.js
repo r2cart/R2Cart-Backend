@@ -96,7 +96,7 @@ export async function notifyAdminsNewOrder(order) {
         OR: [
           { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } },
           { user: { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } } },
-          { user: { staffRole: { in: ['SUPER_ADMIN', 'STORE_MANAGER'] } } },
+          { user: { staffRole: { in: ['SUPER_ADMIN', 'STORE_MANAGER', 'CATEGORY_ADMIN'] } } },
         ],
       },
       include: {
@@ -112,7 +112,7 @@ export async function notifyAdminsNewOrder(order) {
     }
 
     // Filter scoped category admins if applicable
-    const orderCatIds = new Set((order.items || []).map(i => i.product?.categoryId).filter(Boolean));
+    const orderCatIds = new Set((order.items || []).map(i => i.product?.categoryId || i.categoryId).filter(Boolean));
     const eligibleSubs = adminSubs.filter(sub => {
       if (sub.role === 'SUPER_ADMIN' || sub.user?.role === 'SUPER_ADMIN' || sub.user?.staffRole === 'SUPER_ADMIN') {
         return true;

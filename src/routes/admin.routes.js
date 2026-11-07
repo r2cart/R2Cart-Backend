@@ -154,6 +154,7 @@ const authorizeOrderStatusChange = (req, res, next) => {
   return authorizePermission('orders.update_status')(req, res, next);
 };
 
+adminRouter.get('/orders/live-stream', orders.liveStream);
 adminRouter.get('/orders', authorizePermission('orders.view'), orders.list);
 adminRouter.get('/orders/:id', authorizePermission('orders.view'), orders.get);
 adminRouter.patch('/orders/:id/status', authorizeOrderStatusChange, orders.status);

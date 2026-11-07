@@ -109,7 +109,8 @@ export async function sendFcmToAdminsNewOrder(order) {
         OR: [
           { role: 'ADMIN' },
           { role: 'SUPER_ADMIN' },
-          { user: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } } },
+          { user: { role: { in: ['ADMIN', 'SUPER_ADMIN', 'MANAGER'] } } },
+          { user: { staffRole: { in: ['SUPER_ADMIN', 'STORE_MANAGER', 'CATEGORY_ADMIN'] } } },
         ],
       },
       include: {
@@ -122,13 +123,13 @@ export async function sendFcmToAdminsNewOrder(order) {
     if (!adminTokens.length) return;
 
     // Filter tokens: Category-scoped admin only receives alert if this order includes their assigned category
-    const orderCatIds = new Set((order.items || []).map(i => i.product?.categoryId).filter(Boolean));
+    const orderCatIds = new Set((order.items || []).map(i => i.product?.categoryId || i.categoryId).filter(Boolean));
     const eligibleTokens = adminTokens.filter(t => {
       if (t.role === 'SUPER_ADMIN' || t.user?.role === 'SUPER_ADMIN' || t.user?.staffRole === 'SUPER_ADMIN') {
         return true;
       }
       const u = t.user;
-      if (!u) return false;
+      if (!u) return true;
       const assigned = Array.isArray(u.assignedCategoryIds) ? u.assignedCategoryIds : [];
       const isScoped = u.staffRole === 'CATEGORY_ADMIN' || assigned.length > 0;
       if (!isScoped) return true; // Global store manager

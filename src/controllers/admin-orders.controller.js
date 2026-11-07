@@ -7,6 +7,7 @@ import {logAudit} from '../services/audit.service.js';
 import {reverseFifoAllocations} from '../services/fifo.service.js';
 import {invalidateAdminDashboard, invalidateProducts} from '../services/cache.service.js';
 import {resolveUserCategoryScope} from '../utils/category-scope.js';
+import {addOrderStreamClient} from '../services/order-stream.service.js';
 
 export const orderStatuses=['NEW','CONFIRMED','PACKING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 export function normalizeOrderStatus(value){const status=String(value||'').trim().toUpperCase().replaceAll(' ','_');if(!orderStatuses.includes(status))throw new AppError('Invalid order status',422);return status}
@@ -267,5 +268,6 @@ export const orders={
   }
   notifyCustomerOrderStatusUpdate(row,row.status,`Item update: ${req.body.reason||'Order total adjusted'}`).catch(()=>{});
   sendFcmToCustomerStatusUpdate(row,row.status,`Order updated: Revised total is ₹${row.grandTotal}`).catch(()=>{});
- })
+ }),
+ liveStream: (req, res) => addOrderStreamClient(req, res)
 };

@@ -5,6 +5,7 @@ import {calculateCart,resolveDeliveryRules} from '../services/pricing.service.js
 import {sendSupportTicketEmail} from '../services/mail.service.js';
 import {notifyAdminsNewOrder,notifyAdminsOrderCancelled,notifyCustomerOrderPlaced,notifyCustomerOrderStatusUpdate} from '../services/notification.service.js';
 import {sendFcmToAdminsNewOrder,sendFcmToAdminsOrderCancelled,sendFcmToCustomerOrderPlaced,sendFcmToCustomerStatusUpdate} from '../services/fcm.service.js';
+import {broadcastNewOrder} from '../services/order-stream.service.js';
 import {logAudit} from '../services/audit.service.js';
 import {getAvailableCustomerSlots} from './admin-scheduling.controller.js';
 import {consumeFifoBatches, reverseFifoAllocations} from '../services/fifo.service.js';
@@ -546,7 +547,11 @@ export const checkout=asyncHandler(async(req,res)=>{
           }
         }
       },
-      include: { items: true, history: true }
+      include: {
+        items: { include: { product: true } },
+        history: true,
+        user: { select: { id: true, name: true, email: true, mobile: true } }
+      }
     });
 
     // Deterministic item order by productId to prevent deadlocks across concurrent checkouts
@@ -620,7 +625,7 @@ export const checkout=asyncHandler(async(req,res)=>{
 
     await tx.cartItem.deleteMany({ where: { cartId: t.cart.id } });
     return order;
-  }, { maxWait: 15000, timeout: 30000 });created(res,orderDto(result),'Order placed successfully');invalidateAdminDashboard();invalidateProducts();notifyAdminsNewOrder(result).catch(e=>console.error('Admin order push error:',e.message));notifyCustomerOrderPlaced(result).catch(e=>console.error('Customer order push error:',e.message));sendFcmToAdminsNewOrder(result).catch(e=>console.error('Admin FCM order push error:',e.message));sendFcmToCustomerOrderPlaced(result).catch(e=>console.error('Customer FCM order push error:',e.message))});
+  }, { maxWait: 15000, timeout: 30000 });created(res,orderDto(result),'Order placed successfully');invalidateAdminDashboard();invalidateProducts();broadcastNewOrder(result);notifyAdminsNewOrder(result).catch(e=>console.error('Admin order push error:',e.message));notifyCustomerOrderPlaced(result).catch(e=>console.error('Customer order push error:',e.message));sendFcmToAdminsNewOrder(result).catch(e=>console.error('Admin FCM order push error:',e.message));sendFcmToCustomerOrderPlaced(result).catch(e=>console.error('Customer FCM order push error:',e.message))});
 export const orders={
   list:asyncHandler(async(req,res)=>{
     const rows=await prisma.order.findMany({
