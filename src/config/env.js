@@ -34,9 +34,9 @@ export const env = {
   smtpFrom: process.env.SMTP_FROM || '',
   supportEmail: process.env.SUPPORT_EMAIL || process.env.SMTP_FROM || '',
   uploadDir: process.env.UPLOAD_DIR || 'uploads',
-  vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
-  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',
-  vapidSubject: process.env.VAPID_SUBJECT || (process.env.SUPPORT_EMAIL ? (process.env.SUPPORT_EMAIL.startsWith('mailto:') ? process.env.SUPPORT_EMAIL : `mailto:${process.env.SUPPORT_EMAIL}`) : ''),
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY || 'BO1w2k-LiDaBdRpubuoqxvNfencYPWQoYptfAutAN5U1oXACbCkaro3jtrOzE0yEy2XghewIIJMTTyD3joO8Q_Y',
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || 'yOuYWg8zQrDtqdx5FU0KS-I3Wi7tmIk0o_1k2VcH0IY',
+  vapidSubject: process.env.VAPID_SUBJECT || 'mailto:r2cartsupport@gmail.com',
   superAdminEmail: (process.env.SUPER_ADMIN_EMAIL || process.env.INITIAL_SUPER_ADMIN_EMAIL || 'super@gmail.com').trim().toLowerCase(),
   superAdminPassword: process.env.SUPER_ADMIN_PASSWORD || process.env.INITIAL_SUPER_ADMIN_PASSWORD || ''
 };
