@@ -10,7 +10,7 @@ const allowOrigin=(origin,done)=>{
   if(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))return done(null,true);
   return done(new Error('Origin is not allowed by CORS'));
 };
-import {prisma} from './config/prisma.js';
+import {prisma, pingDatabase} from './config/prisma.js';
 import {ensureSuperAdminAccount} from './services/schema-guard.service.js';
 
 export const app = express();
@@ -33,18 +33,27 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(morgan(env.nodeEnv === 'test' ? 'tiny' : 'dev'));
 
-export const createAuthLimiter = (customLimit = 20) => rateLimit({
+export const createAuthLimiter = (customLimit = 60) => rateLimit({
   windowMs: 60 * 1000,
   limit: customLimit,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
+  validate: { trustProxy: false },
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const rawId = req.body?.identifier || req.body?.email || req.body?.deliveryStaffId || '';
+    const cleanId = String(rawId).trim().toLowerCase();
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = forwarded ? String(forwarded).split(',')[0].trim() : req.ip;
+    return cleanId ? `user:${cleanId}` : `ip:${clientIp}`;
+  },
   message: { success: false, message: 'Too many authentication attempts. Please try again after 1 minute.' }
 });
 
-app.use('/api/v1/auth', createAuthLimiter(20), authRouter);
-app.use('/api/v1/admin/auth', createAuthLimiter(20), adminAuthRouter);
-app.use('/api/v1/super-admin/auth', createAuthLimiter(20), superAdminAuthRouter);
-app.use('/api/v1/delivery/auth', createAuthLimiter(20), deliveryAuthRouter);
+app.use('/api/v1/auth', createAuthLimiter(80), authRouter);
+app.use('/api/v1/admin/auth', createAuthLimiter(60), adminAuthRouter);
+app.use('/api/v1/super-admin/auth', createAuthLimiter(60), superAdminAuthRouter);
+app.use('/api/v1/delivery/auth', createAuthLimiter(60), deliveryAuthRouter);
 
 app.post('/api/v1/super-admin/auth/bootstrap', createAuthLimiter(5), async (req, res) => {
   try {
@@ -122,6 +131,7 @@ app.get('/api/v1/health', async (req, res) => {
       meta: {}
     });
   } catch (err) {
+    pingDatabase().catch(() => {});
     res.json({
       success: true,
       message: 'R2Cart API is healthy',

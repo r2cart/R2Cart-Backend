@@ -41,7 +41,7 @@ export const searchProducts=asyncHandler(async(req,res)=>{
 
 export const products=asyncHandler(async(req,res)=>{
   res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
-  const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||20));
+  const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(250,Math.max(1,parseInt(req.query.limit,10)||20));
   if(req.query.q){
     const searchRes=await smartSearchProducts({
       q:req.query.q,
@@ -78,8 +78,28 @@ export const products=asyncHandler(async(req,res)=>{
 
   const setting = await cache.getOrSet('catalog:setting:stock', () => prisma.storeSetting?.findUnique?.({where:{id:1},select:{autoHideOutOfStock:true}}), 600);
   const hideOos=Boolean(setting?.autoHideOutOfStock);
-  const where={deletedAt:null,status:'ACTIVE',...(req.query.category&&{category:{slug:req.query.category}}),...((req.query.available==='true'||hideOos)&&{stock:{gt:0}})};
-  const orderBy=req.query.sort==='low'?{price:'asc'}:req.query.sort==='high'?{price:'desc'}:req.query.sort==='discount'?{featured:'desc'}:{bestSeller:'desc'};
+  const categoryFilter = req.query.category
+    ? {
+        OR: [
+          { category: { slug: req.query.category } },
+          { categoryId: req.query.category }
+        ]
+      }
+    : {};
+  const where={
+    deletedAt:null,
+    status:'ACTIVE',
+    ...categoryFilter,
+    ...((req.query.available==='true'||hideOos)&&{stock:{gt:0}})
+  };
+  const primarySort = req.query.sort === 'low'
+    ? { price: 'asc' }
+    : req.query.sort === 'high'
+      ? { price: 'desc' }
+      : req.query.sort === 'discount'
+        ? { featured: 'desc' }
+        : { bestSeller: 'desc' };
+  const orderBy = [primarySort, { createdAt: 'desc' }, { id: 'asc' }];
   const include={category:true,ratings:true,images:{orderBy:{position:'asc'}}};
   const [rows,total]=await Promise.all([prisma.product.findMany({where,include,orderBy,skip:(page-1)*limit,take:limit}),prisma.product.count({where})]);
   const groups=[...new Set(rows.map(row=>row.variantGroupId).filter(Boolean))];
