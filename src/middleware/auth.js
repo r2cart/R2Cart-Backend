@@ -122,7 +122,11 @@ export const authorizeDeliveryPerson = (req, res, next) => {
     user.role === 'DELIVERY_PERSON' ||
     user.staffRole === 'DELIVERY_PERSON' ||
     user.role === 'SUPER_ADMIN' ||
-    user.staffRole === 'SUPER_ADMIN'
+    user.staffRole === 'SUPER_ADMIN' ||
+    user.role === 'ADMIN' ||
+    user.staffRole === 'ADMIN' ||
+    hasPermission(user, 'delivery.view') ||
+    hasPermission(user, 'delivery.assign')
   ) {
     return next();
   }

@@ -30,14 +30,18 @@ export async function resolveUserCategoryScope(user, dbClient = prisma) {
   }
 
   const isCategoryAdmin = user.staffRole === 'CATEGORY_ADMIN';
-  const hasAssignedCategoryField = user.assignedCategoryIds !== undefined && user.assignedCategoryIds !== null;
+  const hasAssignedCategories = Array.isArray(user.assignedCategoryIds) && user.assignedCategoryIds.length > 0;
 
-  if (isCategoryAdmin || hasAssignedCategoryField) {
+  if (isCategoryAdmin || hasAssignedCategories) {
     const rawIds = Array.isArray(user.assignedCategoryIds) ? user.assignedCategoryIds : [];
     
-    // A missing or empty category assignment must NEVER grant unrestricted access
-    if (rawIds.length === 0) {
+    // For a Category Admin, a missing or empty category assignment must grant zero access
+    if (isCategoryAdmin && rawIds.length === 0) {
       return { isScoped: true, categoryIds: [], assignedCategoryIds: [], categories: [] };
+    }
+
+    if (rawIds.length === 0) {
+      return { isScoped: false, categoryIds: null, assignedCategoryIds: [], categories: [] };
     }
 
     // Verify assigned categories exist and are active in database

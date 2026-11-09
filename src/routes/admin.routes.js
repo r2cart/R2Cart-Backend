@@ -189,7 +189,7 @@ adminRouter.patch('/delivery/areas/:id/pause', authorizePermission('delivery.vie
 adminRouter.delete('/delivery/areas/:id', authorizePermission('delivery.view'), adminDelivery.areas.remove);
 
 adminRouter.get('/delivery/config', authorizePermission('delivery.view'), adminDelivery.deliveryConfig.get);
-adminRouter.patch('/delivery/config', authorizeSuperAdmin, adminDelivery.deliveryConfig.update);
+adminRouter.patch('/delivery/config', authorizePermission('delivery.assign', 'delivery.view'), adminDelivery.deliveryConfig.update);
 
 // Legacy delivery routes compatibility
 adminRouter.get('/delivery', authorizePermission('delivery.view'), a.delivery.list);
