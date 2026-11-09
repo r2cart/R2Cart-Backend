@@ -261,9 +261,15 @@ export async function calculateCart(tx, userId, couponCode, rules) {
     }
   }
 
-  const deliveryFee = (subtotal >= delivery.freeDeliveryThreshold && delivery.freeDeliveryThreshold > 0)
-    ? extraShippingFees
-    : ((Number(delivery.deliveryFee) || 0) + extraShippingFees);
+  const baseDeliveryFee = (subtotal >= delivery.freeDeliveryThreshold && delivery.freeDeliveryThreshold > 0)
+    ? 0
+    : (Number(delivery.deliveryFee) || 0);
+
+  // If product-level delivery charge is active, do NOT stack base store delivery fee on top!
+  const isSoloProduct = (cart.items || []).length === 1;
+  const deliveryFee = extraShippingFees > 0
+    ? (isSoloProduct ? extraShippingFees : Math.max(baseDeliveryFee, extraShippingFees))
+    : baseDeliveryFee;
   const handlingFee = 0;
   const grandTotal = Math.max(0, subtotal + deliveryFee - couponDiscount);
 
