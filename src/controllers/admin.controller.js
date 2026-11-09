@@ -85,6 +85,7 @@ const productData=(body, user)=>{
  let shippingFee = 0;
  let shippingSoloOnly = false;
  let shippingMinOtherCartValue = 0;
+ let shippingVillages = null;
  let orderMode = 'DIRECT_ORDER';
 
  if (allowsSpecialtyScoping) {
@@ -116,6 +117,15 @@ const productData=(body, user)=>{
      shippingMinOtherCartValue = Math.max(0, Number(body.shippingMinOtherCartValue) || 0);
    }
 
+   if (Array.isArray(body.shippingVillages)) {
+     shippingVillages = body.shippingVillages.map(v => String(v || '').trim()).filter(Boolean);
+   } else if (typeof body.shippingVillages === 'string' && body.shippingVillages.trim()) {
+     shippingVillages = body.shippingVillages.split(',').map(v => v.trim()).filter(Boolean);
+   }
+   if (shippingVillages && shippingVillages.length === 0) {
+     shippingVillages = null;
+   }
+
    const VALID_ORDER_MODES = ['DIRECT_ORDER', 'CONTACT_REQUEST', 'BOTH'];
    let reqOrderMode = String(body.orderMode || 'DIRECT_ORDER').trim().toUpperCase();
    if (VALID_ORDER_MODES.includes(reqOrderMode)) {
@@ -136,6 +146,7 @@ const productData=(body, user)=>{
    shippingFee,
    shippingSoloOnly,
    shippingMinOtherCartValue,
+   shippingVillages,
    orderMode,
    minOrderQty: (body.minOrderQty !== undefined && body.minOrderQty !== null && body.minOrderQty !== '')
      ? Math.max(1, parseInt(body.minOrderQty, 10) || 1)
@@ -282,6 +293,7 @@ export const products={
               shippingFee: data.shippingFee,
               shippingSoloOnly: data.shippingSoloOnly,
               shippingMinOtherCartValue: data.shippingMinOtherCartValue,
+              shippingVillages: data.shippingVillages,
               orderMode: data.orderMode,
               ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold }),
               variantGroupId: effectiveGroupId,
@@ -333,6 +345,7 @@ export const products={
           shippingFee: data.shippingFee,
           shippingSoloOnly: data.shippingSoloOnly,
           shippingMinOtherCartValue: data.shippingMinOtherCartValue,
+          shippingVillages: data.shippingVillages,
           orderMode: data.orderMode,
           ...(data.lowStockThreshold !== undefined && { lowStockThreshold: data.lowStockThreshold })
         }

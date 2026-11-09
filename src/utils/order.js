@@ -20,6 +20,7 @@ export function productDto(p){
     shippingFee:moneyNumber(p.shippingFee||0),
     shippingSoloOnly:Boolean(p.shippingSoloOnly),
     shippingMinOtherCartValue:moneyNumber(p.shippingMinOtherCartValue||0),
+    shippingVillages:p.shippingVillages||null,
     minOrderQty: Math.max(1, parseInt(p.minOrderQty, 10) || 1),
     image:optimizeCloudinaryUrl(rawImage, { width: 800 }),
     images:p.images?.map(x=>optimizeCloudinaryUrl(x.url, { width: 800 }))||[],

@@ -213,26 +213,48 @@ export async function calculateCart(tx, userId, couponCode, rules) {
 
   const productDiscount = itemTotal - subtotal;
 
-  // Calculate quantity-based shipping fees and solo / minimum other cart value conditions
+  // Calculate quantity-based shipping fees, village targeting, and minimum other cart value waive-off conditions
   let extraShippingFees = 0;
   for (const itm of cart.items) {
     const feePerUnit = Math.max(0, Number(itm.product?.shippingFee) || 0);
     if (feePerUnit <= 0) continue;
 
+    // Check village / locality targeting if configured on the product
+    const rawVillages = Array.isArray(itm.product?.shippingVillages)
+      ? itm.product.shippingVillages
+      : (typeof itm.product?.shippingVillages === 'string' && itm.product.shippingVillages.trim()
+          ? itm.product.shippingVillages.split(',').map(s => s.trim()).filter(Boolean)
+          : []);
+
+    if (rawVillages.length > 0) {
+      const vId = String(delivery?.villageId || '').trim().toLowerCase();
+      const vName = String(delivery?.villageName || '').trim().toLowerCase();
+      const zId = String(delivery?.zoneId || '').trim().toLowerCase();
+      const zName = String(delivery?.zoneName || '').trim().toLowerCase();
+
+      const isMatch = rawVillages.some(target => {
+        const t = String(target || '').trim().toLowerCase();
+        return t && (t === vId || t === vName || t === zId || t === zName);
+      });
+
+      if (!isMatch) {
+        continue; // Customer's village does not match the product's targeted delivery surcharge villages
+      }
+    }
+
     const qty = Math.max(1, parseInt(itm.quantity, 10) || 1);
     const soloOnly = Boolean(itm.product?.shippingSoloOnly);
     const minOtherCartValue = Math.max(0, Number(itm.product?.shippingMinOtherCartValue) || 0);
+    const itemLineTotal = Number(itm.product?.price || 0) * qty;
+    const otherItemsSubtotal = Math.max(0, subtotal - itemLineTotal);
 
-    if (soloOnly) {
-      const isSolo = cart.items.length === 1;
-      if (isSolo) {
+    if (minOtherCartValue > 0) {
+      if (otherItemsSubtotal < minOtherCartValue) {
         extraShippingFees += feePerUnit * qty;
-      } else {
-        const itemLineTotal = Number(itm.product?.price || 0) * qty;
-        const otherItemsSubtotal = Math.max(0, subtotal - itemLineTotal);
-        if (minOtherCartValue > 0 && otherItemsSubtotal < minOtherCartValue) {
-          extraShippingFees += feePerUnit * qty;
-        }
+      }
+    } else if (soloOnly) {
+      if (cart.items.length === 1 || otherItemsSubtotal === 0) {
+        extraShippingFees += feePerUnit * qty;
       }
     } else {
       extraShippingFees += feePerUnit * qty;
