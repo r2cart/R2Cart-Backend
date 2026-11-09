@@ -267,11 +267,11 @@ export async function calculateCart(tx, userId, couponCode, rules) {
     ? 0
     : (Number(delivery.deliveryFee) || 0);
 
-  // If product-level delivery charge is active, it COMPLETELY replaces base delivery fee!
-  // Customer is never double-charged:
-  const deliveryFee = extraShippingFees > 0
-    ? extraShippingFees
-    : baseDeliveryFee;
+  // Below freeDeliveryThreshold, standard store fee applies.
+  // Once subtotal qualifies for free store delivery, product delivery surcharge applies (until waived off).
+  const deliveryFee = baseDeliveryFee > 0
+    ? baseDeliveryFee
+    : extraShippingFees;
   const handlingFee = Math.max(0, Number(delivery.handlingFee || 0));
   const grandTotal = Math.max(0, subtotal + deliveryFee + handlingFee - couponDiscount);
 
