@@ -33,6 +33,10 @@ const villageData = (body) => {
     ? String(body.overrideMode).toUpperCase()
     : 'COMPLETE';
 
+  const handlingFee = (body.handlingFee !== undefined && body.handlingFee !== null && body.handlingFee !== '')
+    ? Math.max(0, Number(body.handlingFee) || 0)
+    : null;
+
   return {
     name,
     pincode: body.pincode ? String(body.pincode).trim() : null,
@@ -40,6 +44,7 @@ const villageData = (body) => {
     deliveryFee,
     minimumOrder,
     freeDeliveryThreshold,
+    handlingFee,
     radiusKm,
     schedule: body.schedule ? String(body.schedule).trim() : null,
     deliveryHours: body.deliveryHours || null,
@@ -563,6 +568,7 @@ export const deliveryConfig = {
       minimumOrder: Number(setting?.minimumOrder || 0),
       deliveryFee: Number(setting?.deliveryFee || 0),
       freeDeliveryThreshold: Number(setting?.freeDeliveryThreshold || 0),
+      handlingFee: Number(setting?.handlingFee || 0),
       estimatedDelivery: setting?.estimatedDelivery || '15–30 minutes',
       globalDeliveryRadius: Number(setting?.globalDeliveryRadius || 5.0),
       allowCod: setting?.allowCod ?? true,
@@ -575,6 +581,7 @@ export const deliveryConfig = {
     if (req.body.minimumOrder !== undefined) data.minimumOrder = Number(req.body.minimumOrder);
     if (req.body.deliveryFee !== undefined) data.deliveryFee = Number(req.body.deliveryFee);
     if (req.body.freeDeliveryThreshold !== undefined) data.freeDeliveryThreshold = Number(req.body.freeDeliveryThreshold);
+    if (req.body.handlingFee !== undefined) data.handlingFee = Number(req.body.handlingFee);
     if (req.body.estimatedDelivery) data.estimatedDelivery = String(req.body.estimatedDelivery).trim();
     if (req.body.globalDeliveryRadius !== undefined) data.globalDeliveryRadius = Number(req.body.globalDeliveryRadius);
     if (req.body.allowCod !== undefined) data.allowCod = Boolean(req.body.allowCod);

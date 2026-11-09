@@ -186,6 +186,9 @@ export const delivery=asyncHandler(async(req,res)=>{
       const freeThresh = v.freeDeliveryThreshold !== null && v.freeDeliveryThreshold !== undefined && v.freeDeliveryThreshold !== ''
         ? Number(v.freeDeliveryThreshold)
         : (parentArea?.freeDeliveryThreshold !== null && parentArea?.freeDeliveryThreshold !== undefined ? Number(parentArea.freeDeliveryThreshold) : Number(settings?.freeDeliveryThreshold || 499));
+      const handlingFee = v.handlingFee !== null && v.handlingFee !== undefined && v.handlingFee !== ''
+        ? Number(v.handlingFee)
+        : (parentArea?.handlingFee !== null && parentArea?.handlingFee !== undefined ? Number(parentArea.handlingFee) : Number(settings?.handlingFee || 0));
       const estMins = v.estimatedMinutes ? Number(v.estimatedMinutes) : (parentArea?.estimatedMinutes ? Number(parentArea.estimatedMinutes) : 30);
 
       const isVillageSuspended = Boolean(
@@ -213,6 +216,7 @@ export const delivery=asyncHandler(async(req,res)=>{
         deliveryFee:fee,
         minimumOrder:minOrder,
         freeDeliveryThreshold:freeThresh,
+        handlingFee,
         radiusKm:Number(v.radiusKm||settings?.globalDeliveryRadius||5),
         estimatedMinutes:estMins,
         openingTime,
@@ -261,6 +265,7 @@ export const delivery=asyncHandler(async(req,res)=>{
         deliveryFee:Number(a.deliveryFee),
         minimumOrder:Number(a.minimumOrder),
         freeDeliveryThreshold:Number(a.freeDeliveryThreshold),
+        handlingFee: a.handlingFee !== null && a.handlingFee !== undefined ? Number(a.handlingFee) : Number(settings?.handlingFee || 0),
         estimatedMinutes:a.estimatedMinutes,
         openingTime:areaOpen,
         closingTime:areaClose,
@@ -282,6 +287,7 @@ export const delivery=asyncHandler(async(req,res)=>{
       minimumOrder:Number(settings?.minimumOrder||0),
       deliveryFee:Number(settings?.deliveryFee||0),
       freeDeliveryThreshold:Number(settings?.freeDeliveryThreshold||0),
+      handlingFee:Number(settings?.handlingFee||0),
       estimatedDelivery:settings?.estimatedDelivery||'15-30 minutes'
     };
   }, 60);

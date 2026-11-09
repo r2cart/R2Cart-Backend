@@ -102,6 +102,40 @@ export async function ensureDeliveryOperatingHoursColumns() {
   }
 }
 
+export async function ensureHandlingFeeColumns() {
+  try {
+    const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');
+    if (isPostgres) {
+      await prisma.$executeRawUnsafe(`ALTER TABLE "store_settings" ADD COLUMN IF NOT EXISTS "handlingFee" DECIMAL(10,2) DEFAULT 0.00;`).catch(() => {});
+      await prisma.$executeRawUnsafe(`ALTER TABLE "delivery_villages" ADD COLUMN IF NOT EXISTS "handlingFee" DECIMAL(10,2) NULL;`).catch(() => {});
+      await prisma.$executeRawUnsafe(`ALTER TABLE "delivery_areas" ADD COLUMN IF NOT EXISTS "handlingFee" DECIMAL(10,2) NULL;`).catch(() => {});
+    } else {
+      const targets = [
+        { table: 'store_settings', col: 'handlingFee', def: 'DECIMAL(10,2) NULL DEFAULT 0.00' },
+        { table: 'delivery_villages', col: 'handlingFee', def: 'DECIMAL(10,2) NULL' },
+        { table: 'delivery_areas', col: 'handlingFee', def: 'DECIMAL(10,2) NULL' }
+      ];
+      for (const t of targets) {
+        const existing = await prisma.$queryRawUnsafe(`
+          SELECT COUNT(*) as cnt 
+          FROM information_schema.COLUMNS 
+          WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = '${t.table}' 
+            AND COLUMN_NAME = '${t.col}'
+        `);
+        const count = Number(existing[0]?.cnt || 0);
+        if (count === 0) {
+          console.log(`[Schema] Adding missing column: ${t.table}.${t.col}`);
+          await prisma.$executeRawUnsafe(`ALTER TABLE \`${t.table}\` ADD COLUMN \`${t.col}\` ${t.def}`);
+        }
+      }
+    }
+    console.log('[Schema] Handling Fee columns verified.');
+  } catch (err) {
+    console.warn('[Schema] Handling fee verify notice:', err.message);
+  }
+}
+
 export async function ensureCategoryAdminColumns() {
   try {
     const isPostgres = process.env.DATABASE_URL?.startsWith('postgres');

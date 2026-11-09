@@ -29,6 +29,7 @@ export async function resolveVillageDeliveryRules({
     deliveryFee: Number(settings?.deliveryFee ?? 20),
     minimumOrder: Number(settings?.minimumOrder ?? 199),
     freeDeliveryThreshold: Number(settings?.freeDeliveryThreshold ?? 499),
+    handlingFee: Number(settings?.handlingFee ?? 0),
     estimatedDelivery: settings?.estimatedDelivery || '15-30 minutes',
     estimatedMinutes: 30,
     radiusKm: Number(settings?.globalDeliveryRadius ?? 5.0),
@@ -138,6 +139,7 @@ export async function resolveVillageDeliveryRules({
       deliveryFee: Number(matchedArea.deliveryFee ?? globalDefaults.deliveryFee),
       minimumOrder: Number(matchedArea.minimumOrder ?? globalDefaults.minimumOrder),
       freeDeliveryThreshold: Number(matchedArea.freeDeliveryThreshold ?? globalDefaults.freeDeliveryThreshold),
+      handlingFee: matchedArea.handlingFee !== null && matchedArea.handlingFee !== undefined ? Number(matchedArea.handlingFee) : globalDefaults.handlingFee,
       estimatedDelivery: matchedArea.estimatedMinutes ? `${matchedArea.estimatedMinutes} minutes` : globalDefaults.estimatedDelivery,
       estimatedMinutes: matchedArea.estimatedMinutes || 30,
       openingTime: areaOpenStr,
@@ -210,6 +212,10 @@ export async function resolveVillageDeliveryRules({
   const rawFee = v.deliveryFee !== undefined && v.deliveryFee !== null ? v.deliveryFee : v.deliveryCharge;
   const rawMin = v.minimumOrder;
   const rawFree = v.freeDeliveryThreshold !== undefined && v.freeDeliveryThreshold !== null ? v.freeDeliveryThreshold : v.freeDeliveryAbove;
+  const rawHandling = v.handlingFee;
+  const effectiveHandlingFee = (rawHandling !== null && rawHandling !== undefined && String(rawHandling).trim() !== '')
+    ? Number(rawHandling)
+    : globalDefaults.handlingFee;
 
   if (overrideMode === 'COMPLETE') {
     // Mode A: Complete Village Override
@@ -334,6 +340,7 @@ export async function resolveVillageDeliveryRules({
       deliveryFee: effectiveFee,
       minimumOrder: effectiveMinOrder,
       freeDeliveryThreshold: effectiveFreeThreshold,
+      handlingFee: effectiveHandlingFee,
       estimatedDelivery: effectiveEstimatedDelivery,
       estimatedMinutes: effectiveEstMinutes,
       openingTime: effectiveOpenStr,

@@ -446,6 +446,7 @@ model DeliveryArea {
   minimumOrder          Decimal           @db.Decimal(10, 2)
   deliveryFee           Decimal           @db.Decimal(10, 2)
   freeDeliveryThreshold Decimal           @db.Decimal(10, 2)
+  handlingFee           Decimal?          @db.Decimal(10, 2)
   estimatedMinutes      Int
   openingTime           String?
   closingTime           String?
@@ -500,6 +501,7 @@ model StoreSetting {
   minimumOrder          Decimal  @db.Decimal(10, 2)
   deliveryFee           Decimal  @db.Decimal(10, 2)
   freeDeliveryThreshold Decimal  @db.Decimal(10, 2)
+  handlingFee           Decimal? @default(0) @db.Decimal(10, 2)
   estimatedDelivery     String
   notifications         Json
   policies              Json?
@@ -607,6 +609,7 @@ model DeliveryVillage {
   deliveryFee           Decimal       @db.Decimal(10, 2)
   minimumOrder          Decimal       @db.Decimal(10, 2)
   freeDeliveryThreshold Decimal       @db.Decimal(10, 2)
+  handlingFee           Decimal?      @db.Decimal(10, 2)
   radiusKm              Decimal?      @db.Decimal(6, 2) @default(5.00)
   schedule              String?
   deliveryHours         Json?

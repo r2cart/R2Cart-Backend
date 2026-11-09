@@ -14,6 +14,7 @@ export async function resolveDeliveryRules(tx, area) {
       minimumOrder: Number(settings.minimumOrder || 0),
       deliveryFee: Number(settings.deliveryFee || 0),
       freeDeliveryThreshold: Number(settings.freeDeliveryThreshold || 0),
+      handlingFee: Number(settings.handlingFee || 0),
       estimatedDelivery: settings.estimatedDelivery || '15-30 minutes',
       schedule: null,
       allowCod: settings.allowCod ?? true,
@@ -46,6 +47,7 @@ export async function resolveDeliveryRules(tx, area) {
     minimumOrder: resolved.minimumOrder,
     deliveryFee: resolved.deliveryFee,
     freeDeliveryThreshold: resolved.freeDeliveryThreshold,
+    handlingFee: Number(resolved.handlingFee || 0),
     estimatedDelivery: resolved.estimatedDelivery,
     schedule: resolved.scheduleNote || null,
     allowCod: resolved.allowCod,
@@ -265,13 +267,13 @@ export async function calculateCart(tx, userId, couponCode, rules) {
     ? 0
     : (Number(delivery.deliveryFee) || 0);
 
-  // If product-level delivery charge is active, do NOT stack base store delivery fee on top!
-  const isSoloProduct = (cart.items || []).length === 1;
+  // If product-level delivery charge is active, it COMPLETELY replaces base delivery fee!
+  // Customer is never double-charged:
   const deliveryFee = extraShippingFees > 0
-    ? (isSoloProduct ? extraShippingFees : Math.max(baseDeliveryFee, extraShippingFees))
+    ? extraShippingFees
     : baseDeliveryFee;
-  const handlingFee = 0;
-  const grandTotal = Math.max(0, subtotal + deliveryFee - couponDiscount);
+  const handlingFee = Math.max(0, Number(delivery.handlingFee || 0));
+  const grandTotal = Math.max(0, subtotal + deliveryFee + handlingFee - couponDiscount);
 
   return {
     cart,
