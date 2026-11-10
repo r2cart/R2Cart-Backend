@@ -9,6 +9,57 @@ import {smartSearchProducts} from '../services/search.service.js';
 import {cache} from '../services/cache.service.js';
 import {sendFcmToAdminsNewEnquiry} from '../services/fcm.service.js';
 
+export function normalizeBaseName(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .toLowerCase()
+    .replace(/\s*\(\s*\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|ml|l|ltr|pc|pcs|pack|packs)\b[^\)]*\)/gi, '')
+    .replace(/\s*-\s*\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|ml|l|ltr|pc|pcs|pack|packs)\b.*$/gi, '')
+    .replace(/\s+\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|ml|l|ltr|pc|pcs|pack|packs)\b.*$/gi, '')
+    .trim();
+}
+
+export function interleaveProductVariants(products) {
+  if (!Array.isArray(products) || products.length <= 2) return products;
+
+  const groupsMap = new Map();
+  const groupOrder = [];
+
+  for (const p of products) {
+    if (!p) continue;
+    const baseKey = p.variantGroupId
+      ? `group:${p.variantGroupId}`
+      : `name:${normalizeBaseName(p.name) || p.id}`;
+
+    if (!groupsMap.has(baseKey)) {
+      groupsMap.set(baseKey, []);
+      groupOrder.push(baseKey);
+    }
+    groupsMap.get(baseKey).push(p);
+  }
+
+  if (groupsMap.size <= 1 || groupsMap.size === products.length) {
+    return products;
+  }
+
+  let maxLen = 0;
+  for (const list of groupsMap.values()) {
+    if (list.length > maxLen) maxLen = list.length;
+  }
+
+  const result = [];
+  for (let round = 0; round < maxLen; round++) {
+    for (const key of groupOrder) {
+      const list = groupsMap.get(key);
+      if (round < list.length) {
+        result.push(list[round]);
+      }
+    }
+  }
+
+  return result;
+}
+
 export const categories=asyncHandler(async(req,res)=>{
   res.setHeader('Cache-Control', 'no-cache, must-revalidate, max-age=0');
   const data = await cache.getOrSet('catalog:categories', () => catalogRepository.categories(), 300);
@@ -105,11 +156,16 @@ export const products=asyncHandler(async(req,res)=>{
   const groups=[...new Set(rows.map(row=>row.variantGroupId).filter(Boolean))];
   const packs=groups.length?await prisma.product.findMany({where:{deletedAt:null,status:'ACTIVE',variantGroupId:{in:groups}},include,orderBy:{price:'asc'}}):[];
   const formattedRows = rows.map(row=>({...productDto(row),variants:row.variantGroupId?packs.filter(pack=>pack.variantGroupId===row.variantGroupId).map(productDto):[]}));
+
+  const finalRows = (!req.query.sort || req.query.sort === 'popular' || req.query.sort === 'default')
+    ? interleaveProductVariants(formattedRows)
+    : formattedRows;
+
   const meta = {page,limit,total,pages:Math.ceil(total/limit)};
 
-  cache.set(cacheKey, { data: formattedRows, meta }, 120);
+  cache.set(cacheKey, { data: finalRows, meta }, 120);
 
-  ok(res,formattedRows,'Products fetched',meta);
+  ok(res,finalRows,'Products fetched',meta);
 });
 
 export const product=asyncHandler(async(req,res)=>{
